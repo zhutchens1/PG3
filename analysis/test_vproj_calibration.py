@@ -7,25 +7,39 @@ import prob_g3groupfinder as pg3
 import foftools as fof
 import pickle
 from scipy.integrate import simpson as simps
+from scipy.optimize import curve_fit
+
+
 ######
 eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv").set_index('name')
-eco = eco[(eco.absrmag<=-19.5)]
-eco.loc[:,'czerr'] = eco.cz*0 + 50
+eco.loc[:,'czerr'] = eco.cz*0 + 35 
+ecophotz = pd.read_csv("/srv/one/hperk4/eco_resb_decals_photoz.csv")
+ecophotz = ecophotz[ecophotz.name.str.startswith('ECO')].set_index('name')
+eco = pd.concat([eco,ecophotz],axis=1)
+eco.loc[:,'photo_z_corr'] = eco.photo_z_corr.fillna(value=eco.cz)
+eco.loc[:,'e_tab_corr'] = eco.e_tab_corr.fillna(value=eco.czerr)
 
+eco = eco[(eco.absrmag<=-19.5)]
+
+cz_to_use = eco.cz#eco.photo_z_corr#eco.cz
+czerr_to_use = eco.czerr#eco.e_tab_corr#eco.czerr
+
+print(ecophotz)
 ######
 # PFOF
 bperp = 0.07
 blos = 1.1
 s = (1.91936e5/len(eco))**(1/3.)
-#pfofid = pg3.pfof_comoving(eco.radeg, eco.dedeg, eco.cz, eco.czerr, bperp*s, blos*s, 0.9)
-#pickle.dump(pfofid, open('pfofid.pkl','wb'))
+Pth = 0.01
+pfofid = pg3.pfof_comoving(eco.radeg, eco.dedeg, cz_to_use, czerr_to_use, bperp*s, blos*s, Pth)
+pickle.dump(pfofid, open('pfofid.pkl','wb'))
 pfofid = pickle.load(open('pfofid.pkl','rb'))
 eco.loc[:,'pfofid'] = pfofid
 
 ###############
 # Group Centers
 
-grpra, grpdec, grpz, zpdfs = pg3.prob_group_skycoords(eco.radeg.to_numpy(), eco.dedeg.to_numpy(), eco.cz.to_numpy()/3e5, eco.czerr.to_numpy()/3e5, eco.pfofid.to_numpy(), True)
+grpra, grpdec, grpz, zpdfs = pg3.prob_group_skycoords(eco.radeg.to_numpy(), eco.dedeg.to_numpy(), cz_to_use/3e5, czerr_to_use/3e5, eco.pfofid.to_numpy(), True)
 grpn = fof.multiplicity_function(eco.pfofid, return_by_galaxy=True)
 eco.loc[:,'pfofgrpn'] = grpn
 eco.loc[:,'pfofgrpz'] = grpz
@@ -45,13 +59,15 @@ groups=eco.groupby('pfofid').first()
 #plt.show()
 
 newvpecmesh = np.arange(-3000,3000,1)
+medianvalues=[]
+medianvalue_nonprob=[]
 for nn in np.unique(groups.pfofgrpn):
-    if nn==10:
+    if nn>1:
         grpids_needed = groups[groups.pfofgrpn==nn].index.to_numpy() # note index is pfofid
         grpz_needed = groups[groups.pfofgrpn==nn].pfofgrpz.to_numpy()
         _, idx, _ = np.intersect1d(zpdfs['grpid'], grpids_needed, return_indices=True)
         pdfs_at_fixed_nn = np.array([zpdfs['pdf'][np.where(zpdfs['grpid']==gg)][0] for gg in grpids_needed])
-        print(pdfs_at_fixed_nn.shape)
+        #print(pdfs_at_fixed_nn.shape)
         grpz_for_pdfs = grpz_needed#np.array([zpdfs['pdf'][np.where(zpdfs['grpid']==gg)] for gg in grpids_needed])
         #grpz_for_pdfs = np.array([grpz_needed[np.where(grpids_needed==gg)][0] for gg in zpdfs['grpid'][idx]])
         vpecmesh = 3e5*(zpdfs['zmesh'] - grpz_for_pdfs[:,np.newaxis])/(1+grpz_for_pdfs[:,np.newaxis])
@@ -72,14 +88,39 @@ for nn in np.unique(groups.pfofgrpn):
         #combinedvpecdist = np.vstack([np.abs(combinedvpecdist[0]),np.abs(combinedvpecdist[1])])
         combinedvpecdist = np.vstack([np.flip(combinedvpecdist[0]), combinedvpecdist[1]])
         combinedvpecdist = np.sum(combinedvpecdist,axis=0)
-        print(combinedvpecdist.shape)
+        #print(combinedvpecdist.shape)
 
-        plt.figure()
         finalvpec = np.hsplit(newvpecmesh,2)[1]
-        plt.plot(finalvpec, combinedvpecdist)
-        plt.axvline(pg3.get_median_eCDF(finalvpec,combinedvpecdist),color='k')
-        plt.show()
+        medianvalues.append(pg3.get_median_eCDF(finalvpec, combinedvpecdist))
+        sel = (groups.pfofgrpn==nn)
+        medianvalue_nonprob.append(np.median(np.abs(groups[sel].pfofgrpz*3e5 - groups[sel].cz)))
 
+
+plt.figure()
+plt.title("Using 100% spec-z")# Hannah's corrected photo-z's (P_thresh = {})".format(Pth))
+model = lambda x, av, bv: av*np.log10(bv*x+1)
+
+plt.plot(np.unique(groups.pfofgrpn)[1:], medianvalues, 'k^', label=r'Probabilistic $\Delta v_{\rm proj,gal}$')
+plt.plot(np.unique(groups.pfofgrpn)[1:], medianvalue_nonprob, '*', color='gray', label=r'Non-prob $\Delta v_{\rm proj,gal}$')
+
+#popt,pcov = curve_fit(model, np.unique(groups.pfofgrpn)[1:], medianvalues, p0=[3.45e2, 0.17], maxfev=2000)
+
+plt.ylabel("Relative Velocity from Giant to Group Center [km/s]")
+plt.xlabel(r"Group $N_{\rm giants}$")
+tx = np.arange(1,25,1)
+#plt.plot(tx, model(tx,*popt) ,color='r',label='Best-Fit Model')
+plt.plot(tx, 3.45e2*np.log10(0.17*tx + 1),label='H23 Best-Fit Model',color='cornflowerblue')
+#plt.xlim(0,20)
+plt.legend(loc='best')
+plt.show()
+
+print(np.unique(groups.pfofgrpn)[1:])
+#        plt.figure()
+#        finalvpec = np.hsplit(newvpecmesh,2)[1]
+#        plt.plot(finalvpec, combinedvpecdist)
+#        plt.axvline(pg3.get_median_eCDF(finalvpec,combinedvpecdist),color='k')
+#        plt.show()
+#
 
 
 """
