@@ -24,23 +24,24 @@ df = df[(df.absrmag>-990)]
 
 zz = np.linspace(0,2,1000)
 limit = 26 + 5 - 5 * np.log10(cosmo.luminosity_distance(zz).to_value()*1e6)
-samplebinedges = np.arange(0,1.4,0.2)
+samplebinedges = np.arange(0,1.2,0.2)
 box_xy = [(leftedgex, complimit) for leftedgex, complimit in zip(samplebinedges[:-1],np.interp(samplebinedges[1:],zz,limit))]
 boxwidth = np.diff(samplebinedges)
 
 
 plt.figure(figsize=(singlecolsize[0],singlecolsize[1]*1.3))
-plt.scatter(df.bestoverallredshift, df.absrmag, color='cornflowerblue', s=1, alpha=0.05, rasterized=True)
-plt.plot(zz,limit,color='k', linewidth=3, label=r'$m_r = +26$ (VOICE $r$ Limit)')
+#plt.scatter(df.bestoverallredshift, df.absrmag, color='cornflowerblue', s=1, alpha=0.05, rasterized=True)
+plt.scatter(df.redshift, df.absrmag, color='cornflowerblue', s=1, alpha=0.05, rasterized=True)
+plt.plot(zz,limit,color='k', linewidth=1.5, label=r'$m_r = +26$ (VOICE $r$ Limit)', linestyle='dashed')
 for ii,box in enumerate(box_xy):
     rect = plt.Rectangle(xy=box, width=boxwidth[ii], height=-20, facecolor='None', edgecolor='k', linewidth=2)
     plt.gca().add_patch(rect)
 plt.xlim(0,2)
 plt.ylim(-24,-12)
-plt.xlim(0,1.2)
+plt.xlim(0,1.0)
 plt.legend(loc='best',fontsize=8)
 plt.gca().invert_yaxis()
-plt.xlabel(r'$z$')
+plt.xlabel(r'$z_{\rm best}$')
 plt.ylabel(r'$M_r$')
 plt.tight_layout()
 plt.savefig("../figures/LADUMA_Mr_vs_z.pdf",dpi=300)

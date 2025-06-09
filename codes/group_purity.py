@@ -59,7 +59,7 @@ def get_metrics_by_group(groupid, haloid, galproperty):
         groupsel = np.where(groupid==gg)
         N_g = len(groupsel[0])
         sortidx = np.argsort(sortfactor*galproperty[groupsel])
-        hh = mode(haloid[groupsel][sortidx])[0][0]
+        hh = mode(haloid[groupsel][sortidx], keepdims=True)[0][0]
         halosel = np.where(haloid==hh)
         N_h = len(halosel[0])
         N_s = np.sum(haloid[groupsel]==hh)
@@ -125,7 +125,7 @@ def get_metrics_by_halo(groupid, haloid, galproperty):
         halosel = np.where(haloid==hh)
         N_h = len(halosel[0])
         sortidx = np.argsort(sortfactor*galproperty[halosel])
-        gg = mode(groupid[halosel][sortidx])[0][0]
+        gg = mode(groupid[halosel][sortidx], keepdims=True)[0][0]
         groupsel = np.where(groupid==gg)
         N_g = len(groupsel[0])
         N_s = np.sum(haloid[groupsel]==hh)

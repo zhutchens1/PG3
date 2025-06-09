@@ -9,30 +9,41 @@ from astropy.cosmology import LambdaCDM, z_at_value
 import astropy.units as uu
 from scipy.interpolate import interp1d 
 from scipy.optimize import curve_fit
+from scipy.spatial import cKDTree
 from smoothedbootstrap import smoothedbootstrap as sbs
-#from giantonlyic import iterative_combination_giants
+from center_binned_stats import center_binned_stats
 from numba import njit
-from scipy.integrate import quad, simpson
+from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
 import math
 from scipy.special import erf as scipy_erf
+from robustats import weighted_median
+from copy import deepcopy
+
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("once",IntegrationWarning)
+
+from matplotlib.ticker import MaxNLocator, AutoLocator
+from matplotlib import rcParams
+rcParams['axes.labelsize'] = 9
+rcParams['xtick.labelsize'] = 9
+rcParams['ytick.labelsize'] = 9
+rcParams['legend.fontsize'] = 9
+rcParams['font.family'] = 'sans-serif'
+rcParams['grid.color'] = 'k'
+rcParams['grid.linewidth'] = 0.2
+my_locator = MaxNLocator(6)
+singlecolsize = (3.3522420091324205, 2.0717995001590714)
+doublecolsize = (7.500005949910059, 4.3880449973709)
 
 SPEED_OF_LIGHT = 2.998e5
 
-def sigmarange(x):
-    q84, q16 = np.percentile(x, [84 ,16])
-    return (q84-q16)/2.
-
-def giantmodel(x, a, b):
-    return np.abs(a)*np.log10(np.abs(b)*x+1)
-
-def decayexp(x, a, b):
-    return np.abs(a)*np.exp(-1*np.abs(b)*x)#+np.abs(d)
 
 def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,fof_bperp=0.07,fof_blos=1.1,fof_sep=None, volume=None,pfof_Pth=0.01, center_mode='average',\
-                 iterative_giant_only_groups=False, n_bootstraps=10000, rproj_fit_guess=None, rproj_fit_params = None, rproj_fit_multiplier=None,\
+                 iterative_giant_only_groups=False, n_bootstraps=1000, rproj_fit_guess=None, rproj_fit_params = None, rproj_fit_multiplier=None,\
                  vproj_fit_guess = None, vproj_fit_params = None, vproj_fit_multiplier=None, vproj_fit_offset=0, gd_rproj_fit_guess=None, gd_rproj_fit_params = None,\
                  gd_rproj_fit_multiplier=None, gd_vproj_fit_guess=None, gd_vproj_fit_params = None, gd_vproj_fit_multiplier=None,gd_vproj_fit_offset=None,
-                 gd_fit_bins=None,ic_center_mode='arithmetic', ic_decision_mode='centers',H0=100., Om0=0.3, Ode0=0.7, showplots=False, saveplotspdf=False):
+                 gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, showplots=False, saveplotspdf=False):
     """
     Identify galaxy groups in redshift space using the RESOLVE-G3 algorithm (Hutchens et al. 2022).
 
@@ -43,7 +54,7 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     dedeg : array_like
         Declination of input galaxies in decimal degrees.
     cz : array_like
-        Recessional velocities of input galaxies in decimal degrees.
+        Recessional velocities of input galaxies in km/s
     czerr : array_like
         1-sigma errors on cz
     absrmag : array_like
@@ -112,12 +123,6 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     gd_fit_bins : iterable
         Array of bin edges for binning and fitting properties of giant+dwarf groups prior to
         dwarf-only group finding. 
-    ic_center_mode : str
-        Mode of computing group center in dwarf-only group finding mode (default `arithmetic`).
-    ic_decision_mode : str
-        Mode of deciding whether to merge giant-only or dwarf-only seed groups. Default `centers`, which
-        evaluates whether seed group centers are close enough. If `allgalaxies`, all galaxies
-        must within the specified boundaries.
     H0 : float
         z=0 Hubble constant in units of (km/s)/Mpc, default 100.0. Return parameters will
         be consistent with this choice.
@@ -158,6 +163,8 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     dedeg=np.array(dedeg)
     cz=np.array(cz)
     czerr=np.array(czerr)
+    if (cz<20).all():
+        raise ValueError("all cz<20; did you accidentally provide raw redshifts rather than cz in km/s?")
     absrmag=np.array(absrmag)
     g3grpid = np.zeros_like(radeg)-99.
     g3ssid = np.zeros_like(radeg)-99.
@@ -176,43 +183,55 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     if (rproj_fit_params is None) or (vproj_fit_params is None):
         if center_mode=='average' or center_mode=='giantaverage':
             #giantgrpra, giantgrpdec, giantgrpcz = fof.group_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel], giantfofid)
-            giantgrpra, giantgrpdec, giantgrpz, zpdfs = prob_group_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel]/3e5, czerr[giantsel]/3e5, giantfofid)
-            giantgrpcz = giantgrpz * 3e5
+            giantgrpra, giantgrpdec, giantgrpz, zpdfs = prob_group_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel]/SPEED_OF_LIGHT, czerr[giantsel]/SPEED_OF_LIGHT, giantfofid)
+            giantgrpcz = giantgrpz * SPEED_OF_LIGHT
         else:
             raise ValueError('check group center definition (`center_mode`), only `average` or `giantaverage` (equivalent) currently supported')
         relvel = np.abs(giantgrpcz - cz[giantsel])/(1+giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
         grp_ctd = cosmo.comoving_transverse_distance(giantgrpz).value
-        #gia_ctd = cosmo.comoving_transverse_distance(cz[giantsel]/SPEED_OF_LIGHT).value
-        relprojdist = (grp_ctd+grp_ctd)*np.sin(ic.angular_separation(giantgrpra, giantgrpdec, radeg[giantsel], dedeg[giantsel])/2.0)
+        relprojdist = (grp_ctd+grp_ctd)*np.sin(fof.angular_separation(giantgrpra, giantgrpdec, radeg[giantsel], dedeg[giantsel])/2.0)
         giantgrpn = fof.multiplicity_function(giantfofid, return_by_galaxy=True)
         uniqgiantgrpn, uniqindex = np.unique(giantgrpn, return_index=True)
         keepcalsel = np.where(uniqgiantgrpn>1)
-        wavg_relprojdist = np.array([np.average(relprojdist[np.where(giantgrpn==sz)], weights=1/czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
-        wavg_relvel = np.array([np.average(relvel[np.where(giantgrpn==sz)], weights=1/czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
+        wavg_relprojdist = np.array([weighted_median(relprojdist[np.where(giantgrpn==sz)], 1/czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
+        wavg_relvel = np.array([weighted_median(relvel[np.where(giantgrpn==sz)], 1/czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
         wavg_relprojdist_err = np.zeros_like(wavg_relprojdist)
         wavg_relvel_err = np.zeros_like(wavg_relvel)
         for ii,nn in enumerate(uniqgiantgrpn[keepcalsel]):
             df_ = pd.DataFrame({'czerr':czerr[np.where(giantgrpn==nn)], 'rpdist':relprojdist[np.where(giantgrpn==nn)], 'dv':relvel[np.where(giantgrpn==nn)]})
             resamples = [df_.sample(frac=1, replace=True) for ii in range(0,n_bootstraps)]
-            wavg_relprojdist_err[ii] = np.std([np.average(resamp.rpdist, weights=1/resamp.czerr) for resamp in resamples])
-            wavg_relvel_err[ii] = np.std([np.average(resamp.dv, weights=1/resamp.czerr) for resamp in resamples])
-        rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist, sigma=wavg_relprojdist_err, p0=rproj_fit_guess)
+            wavg_relprojdist_err[ii] = np.std([weighted_median(resamp.rpdist, 1/resamp.czerr) for resamp in resamples])
+            wavg_relvel_err[ii] = np.std([weighted_median(resamp.dv, 1/resamp.czerr) for resamp in resamples])
+        rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=rproj_fit_guess, maxfev=2000,sigma=wavg_relprojdist_err)
         rproj_bestfit_err = np.sqrt(np.diag(rproj_bestfit_cov))
     else:
         rproj_bestfit = np.array(rproj_fit_params)
         rproj_bestfit_err = np.zeros(2)*1.
     if vproj_fit_params is None:
-        vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel, sigma=wavg_relvel_err, p0=vproj_fit_guess)
-        vproj_bestfit_err = np.sqrt(np.diag(vproj_bestfit_cov))
+        try:
+            vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel,  p0=vproj_fit_guess, maxfev=2000,sigma=wavg_relvel_err)
+            vproj_bestfit_err = np.sqrt(np.diag(vproj_bestfit_cov))
+        except RuntimeError:
+            plt.figure()
+            plt.plot(uniqgiantgrpn[keepcalsel], wavg_relvel, wavg_relvel_err)
+            plt.xlabel("Ngiants")
+            plt.ylabel("rel vel")
+            plt.xlim(0,20)
+            plt.show()
+            print("Code failed.")
+            exit()
     else:
         vproj_bestfit = np.array(vproj_fit_params)
         vproj_bestfit_err = np.zeros(2)*1.
     
     rproj_boundary = lambda Ngiants: rproj_fit_multiplier*giantmodel(Ngiants, *rproj_bestfit)
     vproj_boundary = lambda Ngiants: vproj_fit_multiplier*giantmodel(Ngiants, *vproj_bestfit) + vproj_fit_offset
+    if showplots: plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel,\
+         wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, saveplotspdf)
     ### if requested, merge giant-only FoF groups through iterative combination
     if iterative_giant_only_groups:
-        revisedgiantgrpid = prob_iterative_combination_giants(radeg[giantsel],dedeg[giantsel],cz[giantsel]/3e5,czerr[giantsel]/3e5,giantfofid,rproj_boundary,vproj_boundary,ic_decision_mode,cosmo)
+        revisedgiantgrpid = prob_iterative_combination_giants(radeg[giantsel],dedeg[giantsel],cz[giantsel]/SPEED_OF_LIGHT,czerr[giantsel]/SPEED_OF_LIGHT,giantfofid,\
+            rproj_boundary,vproj_boundary,pfof_Pth,cosmo)
         g3ssid[giantsel] = giantfofid
         g3grpid[giantsel] = revisedgiantgrpid
     else:
@@ -221,31 +240,62 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     ### associate dwarfs to giant-only groups
     dwarfsel = (absrmag>dwarfgiantdivide)
     if center_mode=='average' or center_mode=='giantaverage':
-        giantgrpra, giantgrpdec, giantgrpz, pdfdict = prob_group_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel]/3e5, czerr[giantsel]/3e5, g3grpid[giantsel], True)
+        giantgrpra, giantgrpdec, giantgrpz, pdfdict = prob_group_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel]/SPEED_OF_LIGHT, czerr[giantsel]/SPEED_OF_LIGHT, g3grpid[giantsel], True)
     else:
         raise ValueError("center_mode must be `average` or `giantaverage`")
-    #elif center_mode=='BCG':
-    #    giantgrpra, giantgrpdec, giantgrpcz = agc.BCG_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel], absrmag[giantsel], g3grpid[giantsel])
-    #elif (type(center_mode) is tuple):
-    #    assert len(center_mode)==2,"Logistic skycoord tuple requires two parameters."
-    #    giantgrpra, giantgrpdec, giantgrpcz = agc.logistic_skycoords(radeg[giantsel], dedeg[giantsel], cz[giantsel], absrmag[giantsel],\
-    #         giantfofid,center_mode[0],center_mode[1])
-
+    
     giantgrpn = fof.multiplicity_function(g3grpid[giantsel],return_by_galaxy=True)
-    dwarfassocid, _ = prob_faint_assoc(radeg[dwarfsel],dedeg[dwarfsel],cz[dwarfsel]/3e5,czerr[dwarfsel]/3e5,giantgrpra,giantgrpdec,giantgrpz,pdfdict,\
+    dwarfassocid, _ = prob_faint_assoc(radeg[dwarfsel],dedeg[dwarfsel],cz[dwarfsel]/SPEED_OF_LIGHT,czerr[dwarfsel]/SPEED_OF_LIGHT,giantgrpra,giantgrpdec,giantgrpz,pdfdict,\
                         g3grpid[giantsel],rproj_boundary(giantgrpn),vproj_boundary(giantgrpn), pfof_Pth, H0=H0,Om0=Om0,Ode0=Ode0)
     g3grpid[dwarfsel]=dwarfassocid
+    print('Finished associating dwarfs to giant-only groups.')
+
+    #### -------- Derive boundaries for dwarf iterative combination
+    if (gd_rproj_fit_params is None) or (gd_vproj_fit_params is None):
+        gdgrpn = fof.multiplicity_function(g3grpid, return_by_galaxy=True)
+        gdsel = np.logical_not(np.logical_or(g3grpid==-99., ((gdgrpn==1) & (absrmag>dwarfgiantdivide))))
+        gdgrpra, gdgrpdec, gdgrpz, _ = prob_group_skycoords(radeg[gdsel], dedeg[gdsel], cz[gdsel]/SPEED_OF_LIGHT, czerr[gdsel]/SPEED_OF_LIGHT,\
+             g3grpid[gdsel])
+
+        gdrelvel = SPEED_OF_LIGHT*np.abs(cz[gdsel]/SPEED_OF_LIGHT - gdgrpz)/(1+gdgrpz)
+        ctd1 = cosmo.comoving_transverse_distance(gdgrpz).value
+        ctd2 = cosmo.comoving_transverse_distance(cz[gdsel]/SPEED_OF_LIGHT).value
+        gdrelprojdist = (ctd1 + ctd2) * np.sin(fof.angular_separation(gdgrpra, gdgrpdec, radeg[gdsel], dedeg[gdsel])/2.0)
+        gdn = gdgrpn[gdsel]
+        gdtotalmag = ic.get_int_mag(absrmag[gdsel], g3grpid[gdsel])
+        binsel = np.where(np.logical_and(gdn>1, gdtotalmag>-24))
+        gdmedianrproj, magbincenters, agbinedges, jk = center_binned_stats(gdtotalmag[binsel], gdrelprojdist[binsel], np.median, bins=gd_fit_bins)
+        gdmedianrproj_err, jk, jk, jk = center_binned_stats(gdtotalmag[binsel], gdrelprojdist[binsel], sigmarange, bins=gd_fit_bins)
+        gdmedianrelvel, jk, jk, jk = center_binned_stats(gdtotalmag[binsel], gdrelvel[binsel], np.median, bins=gd_fit_bins)
+        gdmedianrelvel_err, jk, jk, jk = center_binned_stats(gdtotalmag[binsel], gdrelvel[binsel], sigmarange, bins=gd_fit_bins)
+        nansel = np.isnan(gdmedianrproj)
+    if (gd_rproj_fit_params is None):
+        gd_rproj_bestfit, gd_rproj_cov=curve_fit(decayexp, magbincenters[~nansel], gdmedianrproj[~nansel], p0=gd_rproj_fit_guess)
+        gd_rproj_bestfit_err = np.sqrt(np.diag(gd_rproj_cov))
+    else:
+        gd_rproj_bestfit = np.array(gd_rproj_fit_params)
+        gd_rproj_bestfit_err = np.zeros(len(gd_rproj_fit_params))*1.
+    if (gd_vproj_fit_params is None):
+        gd_vproj_bestfit, gd_vproj_cov=curve_fit(decayexp, magbincenters[~nansel], gdmedianrelvel[~nansel], p0=gd_vproj_fit_guess)
+        gd_vproj_bestfit_err = np.sqrt(np.diag(gd_vproj_cov))
+    else:
+        gd_vproj_bestfit = np.array(gd_vproj_fit_params)
+        gd_vproj_bestfit_err = np.zeros(len(gd_vproj_fit_params))*1.
+    rproj_for_iteration = lambda M: gd_rproj_fit_multiplier*decayexp(M, *gd_rproj_bestfit)
+    vproj_for_iteration = lambda M: gd_vproj_fit_multiplier*decayexp(M, *gd_vproj_bestfit) + gd_vproj_fit_offset
+    if showplots: plot_rproj_vproj_2(g3grpid, absrmag, gdsel, gdtotalmag, gdrelprojdist, gdrelvel, magbincenters, binsel, gdmedianrproj,\
+         gdmedianrelvel, gd_rproj_bestfit, gd_vproj_bestfit, saveplotspdf)
 
     #### --------- iterative combination to make dwarf-only groups
-    #assert (g3grpid[(absrmag<=dwarfgiantdivide)]!=-99.).all(), "Not all giants are grouped." 
-    #grpnafterassoc = fof.multiplicity_function(g3grpid, return_by_galaxy=True)
-    #_ungroupeddwarf_sel = (absrmag>dwarfgiantdivide) & (grpnafterassoc==1)    
-    #itassocid = ic.iterative_combination(radeg[_ungroupeddwarf_sel], dedeg[_ungroupeddwarf_sel], cz[_ungroupeddwarf_sel], absrmag[_ungroupeddwarf_sel],\
-    #               rproj_for_iteration, vproj_for_iteration, starting_id=np.max(g3grpid)+1, centermethod=ic_center_mode, decisionmode=ic_decision_mode, H0=H0)
-    #g3grpid[_ungroupeddwarf_sel]=itassocid
+    assert (g3grpid[(absrmag<=dwarfgiantdivide)]!=-99.).all(), "Not all giants are grouped." 
+    grpnafterassoc = fof.multiplicity_function(g3grpid, return_by_galaxy=True)
+    _ungroupeddwarf_sel = (absrmag>dwarfgiantdivide) & (grpnafterassoc==1)
+    itassocid = dwarf_iterative_combination(radeg[_ungroupeddwarf_sel], dedeg[_ungroupeddwarf_sel], cz[_ungroupeddwarf_sel]/SPEED_OF_LIGHT, \
+        czerr[_ungroupeddwarf_sel]/SPEED_OF_LIGHT, absrmag[_ungroupeddwarf_sel],rproj_for_iteration, vproj_for_iteration, pfof_Pth, cosmo, starting_id=np.max(g3grpid)+1)
+    g3grpid[_ungroupeddwarf_sel]=itassocid
     ### ------------  return quantities
-    #return g3grpid, g3ssid, fof_sep, rproj_bestfit, rproj_bestfit_err, vproj_bestfit, vproj_bestfit_err, gd_rproj_bestfit, gd_rproj_bestfit_err, gd_vproj_bestfit, gd_vproj_bestfit_err 
-    return g3grpid, g3ssid, fof_sep, rproj_bestfit, rproj_bestfit_err, vproj_bestfit, vproj_bestfit_err
+    return g3grpid, g3ssid, fof_sep, rproj_bestfit, rproj_bestfit_err, vproj_bestfit, vproj_bestfit_err, gd_rproj_bestfit,\
+         gd_rproj_bestfit_err, gd_vproj_bestfit, gd_vproj_bestfit_err 
 
 
 #################################################
@@ -290,8 +340,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     los_cmvgdist = (cosmo.comoving_distance(cz/SPEED_OF_LIGHT).value)
     dc_upper = los_cmvgdist + losll
     dc_lower = los_cmvgdist - losll
-    VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0001, zmax=2, method='Bounded')
-    VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0001, zmax=2, method='Bounded') - cz
+    VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0, zmax=2, method='Bounded')
+    VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0, zmax=2, method='Bounded') - cz
     friendship = np.zeros((Ngalaxies, Ngalaxies))
     # Compute on-sky perpendicular distance
     column_phi = phi[:, None]
@@ -407,7 +457,6 @@ def get_group_ind(matrix, active_row_num, visited):
 ###########################################################################################
 ###########################################################################################
 # Group Center Definition Functions 
-
 def gauss_vectorized(x, mu, sigma):
     """
     Gaussian function.
@@ -472,7 +521,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     groupra = np.zeros(ngalaxies)
     groupdec = np.zeros(ngalaxies)
     groupz = np.zeros(ngalaxies)
-    cspeed=3e5
+    cspeed=SPEED_OF_LIGHT
     galaxyz = np.expand_dims(galaxyz,axis=1)
     galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
     for i,uid in enumerate(uniqidnumbers):
@@ -508,7 +557,12 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupdec[sel] = deccen # in degrees
             groupz[sel] = redshiftcen
     if return_z_pdfs:
-        zmesh = np.arange(0,np.max(galaxyz)+8*np.max(galaxyzerr), 1/cspeed) # 1 km/s resolution
+        #zmesh = np.arange(0,np.max(galaxyz)+8*np.max(galaxyzerr), 1/cspeed) # 1 km/s resolution
+        try:
+            zmesh = np.arange(0, np.max(galaxyz)+0.1, 1/cspeed) 
+        except MemoryError:
+            print("MemoryWarning: zmesh is too fine at line 523 in prob_g3groupfinder; trying at 20 km/s resolution")
+            zmesh = np.arange(0, np.max(galaxyz)+0.1, 20/cspeed)
         z_pdfs = np.zeros((len(galaxygrpid), len(zmesh)))
         for i,uid in enumerate(uniqidnumbers):
             sel=np.where(galaxygrpid==uid)
@@ -525,9 +579,9 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
 ######################################################################################################
 ######################################################################################################
 # Iterative Combination for Giant Galaxies
-def prob_iterative_combination_giants(galaxyra,galaxydec,galaxyz,galaxyzerr,giantfofid,rprojboundary,vprojboundary,decisionmode,cosmo):
+def prob_iterative_combination_giants(galaxyra,galaxydec,galaxyz,galaxyzerr,giantfofid,rprojboundary,vprojboundary,pthresh,cosmo):
     """
-    Iteratively combine giant-only FoF groups using group N_giants-based boundaries. This method is probabilistic for Hutchens+2024
+    Iteratively combine giant-only FoF groups using group N_giants-based boundaries. This method is probabilistic for Hutchens+2025
     and incorporates photo-z errors.
 
     Parameters
@@ -548,10 +602,8 @@ def prob_iterative_combination_giants(galaxyra,galaxydec,galaxyz,galaxyzerr,gian
     vprojboundary : callable
         Search boundary to apply in line-of-sight.. Should be callable function of group N_giants.
         Units: km/s
-    decisionmode : str
-        'allgalaxies' or 'centers'. Specifies how to evaluate whether seed group pairs should be merged. 
-    H0 : float
-       Hubble constant in (km/s)/Mpc, default 100. 
+    cosmo : astropy.cosmology
+        cosmology for distance calcs
     
     Returns
     --------------
@@ -574,13 +626,13 @@ def prob_iterative_combination_giants(galaxyra,galaxydec,galaxyz,galaxyzerr,gian
     while (not converged):
         print("Giant-only iterative combination {} in progress...".format(niter))
         oldgiantgroupid = giantgroupid
-        giantgroupid = prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,oldgiantgroupid,rprojboundary,vprojboundary,centermethod,decisionmode,H0)
+        giantgroupid = prob_giant_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,oldgiantgroupid,rprojboundary,vprojboundary,pthresh,cosmo)
         converged = np.array_equal(oldgiantgroupid,giantgroupid)
         niter+=1
     print("Giant-only iterative combination complete.")
     return giantgroupid
 
-def prob_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid, rprojboundary, vprojboundary, centermethod, decisionmode, cosmo):
+def prob_giant_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid, rprojboundary, vprojboundary, pthresh, cosmo):
     """
     Refine input group ID by merging nearest-neighbor groups subject to boundary constraints. For info on arguments, 
     see `giantonly_iterative_combination`
@@ -592,7 +644,7 @@ def prob_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid
     # Prepare output array
     refinedgrpid = deepcopy(grpid)
     # Get the group RA/Dec/cz for every galaxy
-    groupra, groupdec, groupz = fof.prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid)
+    groupra, groupdec, groupz, _ = prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid)
     groupN = fof.multiplicity_function(grpid,return_by_galaxy=True)
     # Get unique potential groups
     uniqgrpid, uniqind = np.unique(grpid, return_index=True)
@@ -600,10 +652,7 @@ def prob_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid
     # Build & query the K-D Tree
     potphi = potra*np.pi/180.
     pottheta = np.pi/2. - potdec*np.pi/180.
-    #zmpc = potcz/HUBBLE_CONST
-    #xmpc = 2.*np.pi*zmpc*potra*np.cos(np.pi*potdec/180.) / 360.
-    #ympc = np.float64(2.*np.pi*zmpc*potdec / 360.)
-    cmvgdist = cosmo.comoving_distance(galaxyz / 3e5).value
+    cmvgdist = cosmo.comoving_distance(potz).value
     zmpc = cmvgdist * np.cos(pottheta)
     xmpc = cmvgdist * np.sin(pottheta)*np.cos(potphi)
     ympc = cmvgdist * np.sin(pottheta)*np.sin(potphi)
@@ -621,10 +670,10 @@ def prob_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid
         nbridx = nnind[idx]
         Gpgalsel=np.where(grpid==uid)
         GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
-        combinedra,combineddec,combinedz = np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel]))
+        combinedra,combineddec,combinedz,combinedzerr= np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])),np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
         #combinedgroupN = int(groupN[Gpgalsel][0])+int(groupN[GNNgalsel][0])
         combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
-        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, centermethod, decisionmode, cosmo) and (not alreadydone[idx]) and (not alreadydone[nbridx]):
+        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo) and (not alreadydone[idx]) and (not alreadydone[nbridx]):
             # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
             nbrnnidx = nnind[nbridx]
             if idx==nbrnnidx:
@@ -638,7 +687,7 @@ def prob_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid
             alreadydone[idx]=1
     return refinedgrpid
 
-def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, centermethod, decisionmode, cosmo):
+def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo):
     """
     Evalaute whether two giant-only groups satisfy the specified boundary criteria.
 
@@ -655,42 +704,45 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     vprojboundary : callable
         Search boundary to apply in line-of-sight.. Should be callable function of group N_giants.
         Units: km/s
-    centermethod : str
-        'arithmetic' or 'luminosity'. Specifies how to propose group centers during the combination process.
-    decisionmode : str
-        'allgalaxies' or 'centers'. Specifies how to evaluate whether seed group pairs should be merged.
+    pthresh : float
+        probability threshold for merging giant-only groups
     cosmo : astropy.cosmology 
         astropy cosmology object for computing comoving distances and other cosmological quantities
     """
-    cc=3e5
-    if decisionmode=='centers':
-        uniqIDnums = np.unique(galgrpid)
-        assert len(uniqIDnums)==2, "galgrpid must have two unique entries (two seed groups)."
-        seed1sel = (galgrpid==uniqIDnums[0])
-        assert False, "correct lines below to be cosmologically correct"
-        seed1grpra,seed1grpdec,seed1grpz = fof.prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel], galzerr[seed1sel] ,galgrpid[seed1sel])
-        seed2sel = (galgrpid==uniqIDnums[1])
-        seed1grpra,seed1grpdec,seed1grpz = fof.prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel], galzerr[seed1sel] ,galgrpid[seed1sel])
-        grp1v = (cosmo.H(seed1grpz)*cosmo.scale_factor(seed1grpz)*cosmo.comoving_distance(seed1grpz)).value
-        grp2v = (cosmo.H(seed2grpz)*cosmo.scale_factor(seed2grpz)*cosmo.comoving_distance(seed2grpz)).value
-        v12 = np.abs(grp2v-grp1v)/(1-(grp2v*grp1v/(cc*cc)))
-        as_ = angular_separation(seed1grpra, seed1grpdec, seed2grpra, seed2grpdec)
-        r12 = 0.5*(cosmo.comoving_transverse_distance(seed1grpz).value + cosmo.comoving_transverse_distance(seed2grpz).value)*as_
-        #allgrpra,allgrpdec,allgrpz = fof.group_skycoords(galra, galdec, galz, np.zeros_like(galra)) # center of all galaxies
-        #seed1radialsep = (seed1grpcz[0]+allgrpcz[0])/100. * np.sin(fof.angular_separation(allgrpra[0],allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
-        #seed1lossep = np.abs(seed1grpcz[0]-allgrpcz[0])
-        #seed2radialsep = (seed2grpcz[0]+allgrpcz[0])/100. * np.sin(fof.angular_separation(allgrpra[0],allgrpdec[0],seed2grpra[0],seed2grpdec[0])/2.)
-        #seed2lossep = np.abs(seed2grpcz[0]-allgrpcz[0])
-        totalgrpN = len(seed1grpra)+len(seed2grpra)
-        #fitingroup1 = (seed1radialsep<rprojboundary(totalgrpN)).all() and (seed1lossep<vprojboundary(totalgrpN)).all()
-        #fitingroup2 = (seed2radialsep<rprojboundary(totalgrpN)).all() and (seed2lossep<vprojboundary(totalgrpN)).all()
-        #fitingroup = fitingroup1 and fitingroup2
-        radialcondition = (v12 < vprojboudnary(totalgrpN))
-        transvcondition = (r12 < rprojboundary(totalgrpN))
-        fitingroup = radialcondition & transvcondition
+    cc=SPEED_OF_LIGHT
+    uniqIDnums = np.unique(combinedgalgrpid)
+    assert len(uniqIDnums)==2, "galgrpid must have two unique entries (two seed groups)."
+    seed1sel = (combinedgalgrpid==uniqIDnums[0])
+    seed1grpra,seed1grpdec,seed1grpz,seed1pdf = prob_group_skycoords(combinedra[seed1sel],combineddec[seed1sel],combinedz[seed1sel], combinedzerr[seed1sel] ,combinedgalgrpid[seed1sel],True)
+    seed2sel = (combinedgalgrpid==uniqIDnums[1])
+    seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(combinedra[seed2sel],combineddec[seed2sel],combinedz[seed2sel], combinedzerr[seed2sel] ,combinedgalgrpid[seed2sel],True)
+    allgrpra,allgrpdec,allgrpz,_ = prob_group_skycoords(combinedra, combineddec, combinedz, combinedzerr, np.zeros(len(combinedra)), False)
+    totalgrpN = len(seed1grpra)+len(seed2grpra)
+    #grp1v = (cosmo.H(seed1grpz)*cosmo.scale_factor(seed1grpz)*cosmo.comoving_distance(seed1grpz)).value
+    #grp2v = (cosmo.H(seed2grpz)*cosmo.scale_factor(seed2grpz)*cosmo.comoving_distance(seed2grpz)).value
+    #v12 = np.abs(grp2v[0]-grp1v[0])/(1-(grp2v[0]*grp1v[0]/(cc*cc)))
+    #as_ = fof.angular_separation(seed1grpra[0], seed1grpdec[0], seed2grpra[0], seed2grpdec[0])
+    #r12 = 0.5*(cosmo.comoving_transverse_distance(seed1grpz[0]).value + cosmo.comoving_transverse_distance(seed2grpz[0]).value)*as_
+    #radialcondition = (v12 < vprojboundary(totalgrpN))
+    #transvcondition = (r12 < rprojboundary(totalgrpN))
+    #fitingroup = radialcondition & transvcondition
+    seed1radialsep = (cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(fof.angular_separation(allgrpra[0],\
+        allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
+    seed2radialsep = (cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(fof.angular_separation(allgrpra[0],\
+        allgrpdec[0],seed2grpra[0],seed2grpdec[0])/2.)
+    fitingroup1 = (seed1radialsep<rprojboundary(totalgrpN)).all()
+    fitingroup2 = (seed2radialsep<rprojboundary(totalgrpN)).all()
+    if fitingroup1 and fitingroup2:
+        eps_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(totalgrpN)
+        interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
+        D1 = interp1d(seed1pdf['zmesh'], seed1pdf['pdf'][0], **interpkwargs)
+        D2 = interp1d(seed2pdf['zmesh'], seed2pdf['pdf'][0], **interpkwargs)
+        integrand = lambda zprime, z: D1(z)*D2(zprime)
+        pcombine, pcombine_err = dblquad(integrand, 0.01, 0.02, lambda z: z-eps_z, lambda z: z+eps_z, epsrel=0.0001)
+        fitingroup = (pcombine > pthresh)
     else:
-        raise ValueError("Only decisionmode `centers` is currently supported")
-
+        fitingroup = False
+    return fitingroup
 
 #######################################################################
 #######################################################################
@@ -758,25 +810,24 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpphi = (grpra * np.pi/180.)
     grptheta = (np.pi/2. - grpdec*(np.pi/180.))
     grp_cmvg = cosmo.comoving_transverse_distance(grpz).value
-
     half_angle = np.arcsin((np.sin((fainttheta-grptheta)/2.0)**2.0 + np.sin(fainttheta)*np.sin(grptheta)*np.sin((faintphi-grpphi)/2.0)**2.0)**0.5)
     Rp = (faint_cmvg + grp_cmvg) * (half_angle)/2
-    DeltaV = 3e5*np.abs(faintz[:,None] - grpz)/(1+grpz)
+    DeltaV = SPEED_OF_LIGHT*np.abs(faintz[:,None] - grpz)/(1+grpz)
     for gg in range(0,len(grpid)):
         for fg in range(0,Nfaint):
-            quick__test = ((Rp[fg][gg]<radius_boundary[gg]) & (DeltaV[fg][gg]<15000))
+            quick__test = ((Rp[fg][gg]<radius_boundary[gg]) & (DeltaV[fg][gg]<6000))
             if quick__test:
-                zrange = (1+grpz[gg])*velocity_boundary[gg]/3e5
+                zrange = (1+grpz[gg])*velocity_boundary[gg]/SPEED_OF_LIGHT
                 sel = np.where(grpzpdf['grpid']==grpid[gg])
                 pdfneeded = grpzpdf['pdf'][sel]
                 Poverlap = dwarf_association_integral(grpzpdf['zmesh'], pdfneeded[0], faintz[fg], faintzerr[fg], zrange, zrange)
-                if (Poverlap<Pth) and (not bool(assoc_flag[fg])):
+                if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
                     prob_values[fg]=Poverlap
                     assoc_grpid[fg]=grpid[gg]
                     assoc_flag[fg]=1
-                elif (Poverlap<Pth) and (bool(assoc_flag[fg])):
+                elif (Poverlap>Pth) and (bool(assoc_flag[fg])):
                     # has already been assocated; is our new Poverlap better?
-                    if Poverlap<prob_values[fg]:
+                    if Poverlap>prob_values[fg]:
                         prob_values[fg]=Poverlap
                         assoc_grpid[fg]=grpid[gg]
                         assoc_flag[fg]=1
@@ -784,12 +835,17 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
                     pass
             else:
                 pass
+    #plt.figure()
+    #print("prob values", prob_values)
+    #plt.hist(np.log10(prob_values[prob_values!=0]),bins='fd')
+    #plt.axvline(np.log10(Pth),color='k')
+    #plt.xlabel("log prob_values")
+    #plt.show()
     # assign group ID numbers to galaxies that didn't associate
     still_isolated = np.where(assoc_grpid==0)
     assoc_grpid[still_isolated]=np.arange(np.max(grpid)+1, np.max(grpid)+1+len(still_isolated[0]), 1)
     assoc_flag[still_isolated]=-1
     return assoc_grpid, assoc_flag
-
 
 def dwarf_association_integral(zgrid, grpzpdf, zdwarf, zerrdwarf, zrangeup, zrangelow):
     """ 
@@ -816,14 +872,345 @@ def gaussian_integral(mu, sigma, a, b):
     mean mu, dispersion sigma, limits of integration a, b (a is lower limit)
     """
     den = sigma*1.41421356
-    term1 = scipy_erf((mu-a)/den)
-    term2 = scipy_erf((mu-b)/den)
-    return 0.5*(term1 + term2)
+    term1 = scipy_erf((b-mu)/den)
+    term2 = scipy_erf((a-mu)/den)
+    return 0.5*(term1 - term2)
+
+# =============================================================================== #
+# =============================================================================== #
+# code for dwarf-only group-finding
+
+def dwarf_iterative_combination(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxymag, rprojboundary, vprojboundary, pthresh, cosmo, starting_id=1):
+    """
+    Perform iterative combination on a list of input galaxies.
+    
+    Parameters
+    ------------
+    galaxyra, galaxydec : iterable
+       Right-ascension and declination of the input galaxies in decimal degrees.
+    galaxycz : iterable
+       Redshift velocity (corrected for Local Group motion) of input galaxies in km/s.
+    galaxyczerr : iterable
+        Redshift velocity uncertainty (corrected for Local Group motion) of input galaxies in km/s.
+    galaxymag : iterable
+       M_r absolute magnitudes of input galaxies, or galaxy stellar/baryonic masses (the code will be able to differentiate.)
+    rprojboundary : callable
+       Search boundary to apply in projection on the sky for grouping input galaxies, function of group-integrated M_r, in units Mpc/h.
+    vprojboundary : callable
+       Search boundary to apply in velocity  on the sky for grouping input galaxies, function of group-integrated M_r or mass, in units km/s.
+    pthresh : float
+        threshold probability
+    cosmo : astropy.cosmology
+        cosmology object
+    starting_id : int, default 1
+       Base ID number to assign to identified groups (all group IDs will be >= starting_id).
+    
+    Returns
+    -----------
+    itassocid: Group ID numbers for every input galaxy. Shape matches `galaxyra`.
+    """
+    print("Beginning iterative combination...")
+    # Check user input
+    assert (callable(rprojboundary) and callable(vprojboundary)),"Inputs `rprojboundary` and `vprojboundary` must be callable."
+    assert (len(galaxyra)==len(galaxydec) and len(galaxydec)==len(galaxyz) and len(galaxyzerr)==len(galaxyz)),"RA/Dec/z/zerr inputs must have same shape."
+    # Convert everything to numpy + create ID array (assuming for now all galaxies are isolated)
+    galaxyra = np.array(galaxyra)
+    galaxydec = np.array(galaxydec)
+    galaxyz = np.array(galaxyz)
+    galaxyzerr = np.array(galaxyzerr)
+    galaxymag = np.array(galaxymag)
+    itassocid = np.arange(starting_id, starting_id+len(galaxyra))
+    # Begin algorithm. 
+    converged=False
+    niter=0
+    while (not converged):
+        print("iteration {} in progress...".format(niter))
+        # Compute based on updated ID number
+        olditassocid = itassocid
+        itassocid = dwarf_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxymag,\
+             olditassocid, rprojboundary, vprojboundary, pthresh, cosmo)
+        # check for convergence
+        converged = np.array_equal(olditassocid, itassocid)
+        niter+=1
+    print("Iterative combination complete.")
+    return itassocid
+
+def dwarf_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,  galaxymag, grpid, rprojboundary, vprojboundary, pthresh, cosmo):
+    """
+    For a list of galaxies defined by groups, refine group ID numbers using a nearest-neighbor
+    search and applying the search boundaries.
+
+    Parameters
+    ------------
+    galaxyra, galaxydec, galaxycz, gaaxyczerr : iterable
+        Input coordinates of galaxies (RA/Dec in decimal degrees, cz and czerr in km/s)
+    galaxymag : iterable
+        M_r magnitudes or stellar/baryonic masses of input galaxies. (note code refers to 'mags' throughout, but
+        underlying `fit_in_group` function will distinguish the two.)
+    grpid : iterable
+        Group ID number for every input galaxy, at current iteration (potential group).
+    rprojboundary, vprojboundary : callable
+        Input functions to assess the search boundaries around potential groups, function of group-integrated luminosity, units Mpc/h and km/s.
+    pthresh : float
+        probability threshold for merging groups
+
+    Returns
+    ------------
+    associd : iterable
+        Refined group ID numbers based on NN "stitching" of groups.
+    """
+    # Prepare output array
+    associd = deepcopy(grpid)
+    # Get the group RA/Dec/cz for every galaxy
+    groupra, groupdec, groupz, _ = prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, grpid)
+    # Get unique potential groups
+    uniqgrpid, uniqind = np.unique(grpid, return_index=True)
+    potra, potdec, potz = groupra[uniqind], groupdec[uniqind], groupz[uniqind] 
+    # Build & query the K-D Tree
+    potphi = potra*np.pi/180.
+    pottheta = np.pi/2. - potdec*np.pi/180.
+    dist = cosmo.comoving_distance(potz).to_value() # Mpc
+    zmpc = dist * np.cos(pottheta) 
+    xmpc = dist * np.sin(pottheta)*np.cos(potphi)
+    ympc = dist * np.sin(pottheta)*np.sin(potphi)
+    coords = np.array([xmpc, ympc, zmpc]).T
+    kdt = cKDTree(coords)
+    nndist, nnind = kdt.query(coords,k=2)
+    nndist=nndist[:,1] # ignore self match
+    nnind=nnind[:,1]
+    
+    # go through potential groups and adjust membership for input galaxies 
+    alreadydone=np.zeros(len(uniqgrpid)).astype(int)
+    ct=0
+    for idx, uid in enumerate(uniqgrpid):
+        # find the nearest neighbor group
+        nbridx = nnind[idx]
+        Gpgalsel=np.where(grpid==uid)
+        GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
+        combinedra,combineddec,combinedz,combinedzerr = np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),\
+            np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])), np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
+        combinedmag = np.hstack((galaxymag[Gpgalsel], galaxymag[GNNgalsel]))
+        combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
+        condition = dwarfic_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, combinedmag, rprojboundary,vprojboundary, pthresh, cosmo)
+        if condition and (not alreadydone[idx]) and (not alreadydone[nbridx]):
+            # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
+            nbrnnidx = nnind[nbridx]
+            if idx==nbrnnidx:
+                # change group ID of NN galaxies
+                associd[GNNgalsel]=int(grpid[Gpgalsel][0])
+                alreadydone[idx]=1
+                alreadydone[nbridx]=1
+            else:
+                alreadydone[idx]=1
+        else:
+            alreadydone[idx]=1
+    return associd  
 
 
+def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojboundary, vprojboundary, pthresh, cosmo):
+    """
+    Check whether two potential groups can be merged based on the integrated luminosity of the 
+    potential members, given limiting input group sizes.
+    
+    Parameters
+    ----------------
+    galra, galdec, galz, galzerr : iterable
+        Coordinates of input galaxies -- all galaxies belonging to the pair of groups that are being assessed. 
+    galgrpid : iterable
+        Seed group ID number for each galaxy.
+    galmag : iterable
+        M_r absolute magnitudes of all input galaxies, or galaxy stellar masses - the function can distinguish the two.
+    zpdfdict : dict
+        Dictionary containing group z pdfs (output of prob_group_skycoords)
+    rprojboundary, vprojboundary : callable
+        Limiting projected- and velocity-space group sizes as function of group-integrated luminosity or stellar mass.
+    pthresh: float
+        Threshold probability for combining seed groups in LOS.
+
+    Returns
+    ----------------
+    fitingroup : bool
+        Bool indicating whether the series of input galaxies can be merged into a single group of the specified size.
+    """
+    if (galmag<=0).all():
+        memberintmag = get_int_mag(galmag, np.full(len(galmag), 1))
+    elif (galmag>=0).all():
+        memberintmag = get_int_mass(galmag, np.full(len(galmag), 1))
+    uniqIDnums = np.unique(galgrpid)
+    assert len(uniqIDnums)==2, "galgrpid must have two unique entries (two seed groups)."
+    seed1sel = (galgrpid==uniqIDnums[0])
+    seed1grpra,seed1grpdec,seed1grpz, seed1pdf = prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel], galzerr[seed1sel], galgrpid[seed1sel], True)
+    seed2sel = (galgrpid==uniqIDnums[1])
+    seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(galra[seed2sel],galdec[seed2sel],galz[seed2sel],galzerr[seed2sel], galgrpid[seed2sel], True)
+    allgrpra,allgrpdec,allgrpz,_ = prob_group_skycoords(galra, galdec, galz, galzerr, np.zeros(len(galra)), False)
+    seed1radialsep = (cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(fof.angular_separation(allgrpra[0],allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
+    seed2radialsep = (cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(fof.angular_separation(allgrpra[0],allgrpdec[0],seed2grpra[0],seed2grpdec[0])/2.)
+    
+    fitingroup1 = (seed1radialsep<rprojboundary(memberintmag)).all()
+    fitingroup2 = (seed2radialsep<rprojboundary(memberintmag)).all()
+    if fitingroup1 and fitingroup2:
+        gamma_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(memberintmag)[0]
+        interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
+        D1 = interp1d(seed1pdf['zmesh'], seed1pdf['pdf'][0], **interpkwargs)
+        D2 = interp1d(seed2pdf['zmesh'], seed2pdf['pdf'][0], **interpkwargs)
+        integrand = lambda zprime, z: D1(z)*D2(zprime)
+        pcombine, pcombine_err = dblquad(integrand, 0.01, 0.02, lambda z: z-gamma_z, lambda z: z+gamma_z, epsrel=0.0001)
+        fitingroup = (pcombine > pthresh)
+    else:
+        fitingroup = False
+    return fitingroup
+
+
+def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel, wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, saveplotspdf):
+    fig,axs=plt.subplots(figsize=doublecolsize, ncols=2)
+    tx = np.linspace(1,30,500)
+    sel = np.where(giantgrpn>1)
+    axs[0].plot(giantgrpn[sel], relprojdist[sel], 'r.', markersize=2, alpha=0.5, label='ECO Giant Galaxies',zorder=0, rasterized=True)
+    axs[0].errorbar(uniqgiantgrpn[keepcalsel], wavg_relprojdist, wavg_relprojdist_err, fmt='^', color='k', label=r'$R_{\rm proj}$',zorder=0)
+    axs[0].plot(tx, giantmodel(tx,*rproj_bestfit), color='blue', label=r'$1R_{\rm proj}^{\rm fit}$',zorder=2)
+    axs[0].plot(tx, 3*giantmodel(tx,*rproj_bestfit), color='green', label=r'$3R_{\rm proj}^{\rm fit}$', linestyle='dashed',zorder=3)
+    axs[0].plot(tx, giantmodel(tx,*(3.06e-1,4.16e-1)), color='gray', label=r'$1R_{\rm proj}^{\rm fit}$ from H23',zorder=2)
+    
+    axs[1].plot(giantgrpn[sel], relvel[sel], 'r.', markersize=2, alpha=0.5, label='ECO Giant Galaxies',zorder=0, rasterized=True)
+    axs[1].errorbar(uniqgiantgrpn[keepcalsel], wavg_relvel, wavg_relvel_err, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$',zorder=0)
+    axs[1].plot(tx, giantmodel(tx,*vproj_bestfit), color='blue', label=r'$1\Delta v_{\rm proj}^{\rm fit}$',zorder=2)
+    axs[1].plot(tx, 4*giantmodel(tx,*vproj_bestfit)+200, color='green', label=r'$4\Delta v_{\rm proj}^{\rm fit} + 200$ km s$^{-1}$',zorder=3, linestyle='dashed')
+    axs[1].plot(tx, giantmodel(tx,*(3.45e2,0.17)), color='gray', label=r'$1\Delta v_{\rm proj}^{\rm fit}$ from H23',zorder=3)
+    
+    for ii in range(0,2):
+        axs[ii].set_xlim(0,20)
+        axs[ii].set_xlabel("Number of Giant Members in Initial Group")
+        axs[ii].legend(loc='upper right',fontsize=8)
+        tks = np.arange(0,22,2)
+        axs[ii].set_xticks(tks)
+    axs[0].set_ylabel("Projected Distance from Giant to Group Center [Mpc]")
+    axs[1].set_ylabel(r"Relative Velocity from Giant to Group Center [km s$^{-1}$]")
+    axs[0].set_ylim(0,1.0)
+    axs[1].set_ylim(0,1000)
+    plt.tight_layout()
+    if saveplotspdf: plt.savefig("../figures/rproj_vproj_cal.pdf",dpi=300)
+    plt.show()
+
+def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelprojdist, ecogdrelvel, magbincenters, binsel, gdmedianrproj, gdmedianrelvel, poptr, poptv,\
+    saveplotspdf):
+    tx = np.linspace(-27,-17,100)
+    fig, (ax,ax1) = plt.subplots(ncols=2, figsize=doublecolsize)
+    giantgrpn = np.array([np.sum((ecoabsrmag[ecogdsel][ecog3grp[ecogdsel]==gg]<-19.5)) for gg in ecog3grp[ecogdsel]])
+    sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
+    sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=True)
+    sel_ = np.where(np.logical_and(giantgrpn>2,ecogdtotalmag>-24))
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=True)
+    #ax.errorbar(magbincenters, gdmedianrproj, yerr=gdmedianrproj_err, fmt='k^', label=r'Medians ($R_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
+    ax.errorbar(magbincenters, gdmedianrproj, yerr=None, fmt='k^', label=r'Medians ($R_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
+    ax.plot(tx, 1*decayexp(tx,*poptr), color='red', label=r'$R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=True)
+    ax.plot(tx, 2*decayexp(tx,*poptr), color='blue', label=r'$2R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=True,linestyle='--')
+    #ax.plot(tx, 3*decayexp(tx,*poptr), label=r'$3R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=True)
+    ax.set_xlabel(r"Integrated $M_r$ of Giant + Dwarf Members")
+    ax.set_ylabel(r"Projected Distance from Galaxy to Group Center [Mpc]")
+    ax.legend(loc='best',fontsize=8,framealpha=0.5)
+    ax.set_xlim(-24.1,-17)
+    xrange=[-24,-16]
+    xticks=np.arange(xrange[0],xrange[1],1)
+    ax.set_xticks(xticks)
+    ax.set_ylim(0,0.8)
+    ax.invert_xaxis()
+
+    #ax1.plot(ecogdtotalmag[binsel], ecogdrelvel[binsel], '.', alpha=0.6, label='ECO Giant-Hosting Group Galaxies', rasterized=True, color='palegreen')
+    #ax1.errorbar(magbincenters, gdmedianrelvel, yerr=gdmedianrelvel_err, fmt='k^',label=r'Medians ($\Delta v_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
+    ax1.errorbar(magbincenters, gdmedianrelvel, yerr=None, fmt='k^',label=r'Medians ($\Delta v_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
+    sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
+    sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=True)
+    sel_ = np.where(np.logical_and(giantgrpn>2,ecogdtotalmag>-24))
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=True)
+    ax1.plot(tx, decayexp(tx, *poptv), color='red', label=r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$', rasterized=True)
+    ax1.plot(tx, 4*decayexp(tx, *poptv)+100, color='blue', label=r'$4\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$+100 km s$^{-1}$', rasterized=True, linestyle='--')
+    ax1.set_ylabel(r"Relative Velocity from Galaxy to Group Center [km s$^{-1}]$")
+    ax1.set_xlabel(r"Integrated $M_r$ of Giant + Dwarf Members")
+    ax1.set_xlim(-24.1,-17)
+    ax1.set_ylim(0,800)
+    ax1.invert_xaxis()
+    ax1.set_xticks(xticks)
+    ax1.legend(loc='best',fontsize=8, framealpha=1)
+    plt.tight_layout()
+    if saveplotspdf: plt.savefig("../figures/itercombboundaries.pdf")
+    plt.show()
+
+def sigmarange(x):
+    q84, q16 = np.percentile(x, [84 ,16])
+    return (q84-q16)/2.
+
+def giantmodel(x, a, b):
+    return np.abs(a)*np.log10(np.abs(b)*x+1)
+
+def decayexp(x, a, b):
+    #return np.abs(a)*np.exp(-1*np.abs(b)*x)#+np.abs(d)
+    return np.abs(a)*np.exp(-1*np.abs(b)*(x+19.5))#+np.abs(d)
+
+
+
+def get_int_mag(galmags, grpid):
+    """
+    Given a list of galaxy absolute magnitudes and group ID numbers,
+    compute group-integrated total magnitudes.
+
+    Parameters
+    ------------
+    galmags : iterable
+       List of absolute magnitudes for every galaxy (SDSS r-band).
+    grpid : iterable
+       List of group ID numbers for every galaxy.
+
+    Returns
+    ------------
+    grpmags : np array
+       Array containing group-integrated magnitudes for each galaxy. Length matches `galmags`.
+    """
+    galmags=np.asarray(galmags)
+    grpid=np.asarray(grpid)
+    grpmags = np.zeros(len(galmags))
+    uniqgrpid=np.unique(grpid)
+    for uid in uniqgrpid:
+        sel=np.where(grpid==uid)
+        totalmag = -2.5*np.log10(np.sum(10**(-0.4*galmags[sel])))
+        grpmags[sel]=totalmag
+    return grpmags
+
+
+# =============================================================================== #
+# =============================================================================== #
 if __name__=='__main__':
+    import time
+    t1 = time.time()
     eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
     eco = eco[eco.absrmag<-17.33] # just to test
-    eco.loc[:,'czerr'] = eco.cz*0 + 50
-    prob_g3groupfinder_luminosity(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,volume=192351/(0.7**3),H0=70.,Om0=0.3,Ode0=0.7,\
-                                    rproj_fit_multiplier = 3, vproj_fit_multiplier=4, vproj_fit_offset=200)
+    eco.loc[:,'czerr'] = eco.cz*0 + 20
+    hubble_const = 70.
+    omega_m = 0.3
+    omega_de = 0.7
+    cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
+    ecovolume = 191958.08 / (hubble_const/100.)**3.
+
+    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'showplots':True,'saveplotspdf':False,
+           'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
+           'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
+           'pfof_Pth' : 0.999, \
+           'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
+
+    pg3out=prob_g3groupfinder_luminosity(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
+    pg3grp=pg3out[0]
+    eco.loc[:,'pg3grp'] = pg3grp
+    print('elapsed time was ', time.time()-t1)
+
+    bins = np.arange(0.5,300.5,1)
+    plt.figure()
+    plt.hist(fof.multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
+    plt.hist(fof.multiplicity_function(eco.pg3grp, return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
+    plt.yscale('log')
+    plt.xlabel(r"Group $N_{\rm galaxies}$")
+    plt.xlim(0,50)
+    plt.legend(loc='best')
+    plt.show()
