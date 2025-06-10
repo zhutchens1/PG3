@@ -1222,7 +1222,7 @@ def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,
     plt.ylabel(r'Number of Groups')
     n_high_N = len(grpn[grpn>np.max(hbins)])
     if n_high_N>0:
-        plt.annotate(xy=(0.5,0.6), xycoords='axes fraction', text=f'+{n_high_N} N>{np.max(hbins)} Groups')
+        plt.annotate(xy=(0.5,0.6), xycoords='axes fraction', text=f'+{n_high_N} N>{np.max(hbins)+0.5} Groups')
     plt.tight_layout()
     plt.close()
 
