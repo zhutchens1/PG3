@@ -22,6 +22,7 @@ pg3_params = {'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offse
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.5, 'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,
            'iterative_giant_only_groups':True, 'dwarfgiantdivide':-19.5}
+nominalzerr = 100/speed_of_light
 
 # ================================================================================= #
 
@@ -32,11 +33,18 @@ volumes = pickle.load(open(volumepath,'rb'))
 for ii, z_i in enumerate(zedges):
     fnamepath = subvoldir(zedges[ii], zedges[ii+1])
     fname = fnamepath.split('/')[-1]
-    floor = (comps[fname] if (comps[fname]<=ecolimit) else ecolimit)
+    floor = (comps[fname] if (comps[fname]<ecolimit) else ecolimit)
+    zmin = (z_i if (z_i!=0.0) else 0.005)
+    zmax = (zedges[ii+1])
 
     df = pd.read_hdf(fnamepath)
-    pg3out=pg3.prob_g3groupfinder_luminosity(df.RA, df.DEC, speed_of_light*df.bestoverallredshift, speed_of_light*df.bestoverallredshifterr, df.absrmag,\
-                            volume=volumes[fname], **pg3_params)
+    df = df[(df.absrmag<floor) & (df.bestoverallredshift>zmin) & (df.bestoverallredshift<zmax)]
+    df.loc[:,'bestoverallredshifterr'] = df.loc[:,'bestoverallredshifterr'].where((df.bestoverallredshifterr>0), nominalzerr)
+    pg3out=pg3.prob_g3groupfinder_luminosity(df.RAall, df.DECall, speed_of_light*df.bestoverallredshift, speed_of_light*df.bestoverallredshifterr,\
+                 df.absrmag,volume=volumes[fname], **pg3_params)
     df.loc[:,'pg3grp'] = pg3out[0]
     df.loc[:,'pg3grpn'] = fof.multiplicity_function(pg3out[0], return_by_galaxy=True)
-    df.to_hdf(fname.replace('.hdf5','_pg3.hdf5'), 0)
+    print('getting group centers...')
+    grpra, grpdec, grpz, _ = pg3.prob_group_skycoords(df.RAall.to_numpy(), df.DECall.to_numpy(), df.bestoverallredshift.to_numpy(),\
+                            df.bestoverallredshifterr.to_numpy(), df.pg3grp.to_numpy(), False)
+    df.to_hdf(fname.replace('.hdf5','_pg3.hdf5'), 'group-cat')
