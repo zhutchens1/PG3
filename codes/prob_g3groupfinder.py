@@ -1,5 +1,6 @@
 import matplotlib
 matplotlib.use('TkAgg')
+from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ import math
 from scipy.special import erf as scipy_erf
 from robustats import weighted_median
 from copy import deepcopy
+from datetime import datetime
 
 import warnings
 with warnings.catch_warnings():
@@ -35,7 +37,6 @@ rcParams['grid.linewidth'] = 0.2
 my_locator = MaxNLocator(6)
 singlecolsize = (3.3522420091324205, 2.0717995001590714)
 doublecolsize = (7.500005949910059, 4.3880449973709)
-
 SPEED_OF_LIGHT = 2.998e5
 
 
@@ -43,7 +44,7 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
                  iterative_giant_only_groups=False, n_bootstraps=1000, rproj_fit_guess=None, rproj_fit_params = None, rproj_fit_multiplier=None,\
                  vproj_fit_guess = None, vproj_fit_params = None, vproj_fit_multiplier=None, vproj_fit_offset=0, gd_rproj_fit_guess=None, gd_rproj_fit_params = None,\
                  gd_rproj_fit_multiplier=None, gd_vproj_fit_guess=None, gd_vproj_fit_params = None, gd_vproj_fit_multiplier=None,gd_vproj_fit_offset=None,
-                 gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, showplots=False, saveplotspdf=False):
+                 gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, saveplotspdf=False, summary_page_savepath=None):
     """
     Identify galaxy groups in redshift space using the RESOLVE-G3 algorithm (Hutchens et al. 2022).
 
@@ -169,7 +170,12 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     g3grpid = np.zeros_like(radeg)-99.
     g3ssid = np.zeros_like(radeg)-99.
     cosmo = LambdaCDM(H0=H0,Om0=Om0,Ode0=Ode0)
-    SPEED_OF_LIGHT=2.998e+5
+
+    if summary_page_savepath is not None:
+        make_summary_page = True
+        PDF = PdfPages(summary_page_savepath)
+
+
     ### giant-only FoF ----------------- # 
     giantsel = (absrmag<=dwarfgiantdivide)
     if fof_sep is not None:
@@ -226,8 +232,11 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     
     rproj_boundary = lambda Ngiants: rproj_fit_multiplier*giantmodel(Ngiants, *rproj_bestfit)
     vproj_boundary = lambda Ngiants: vproj_fit_multiplier*giantmodel(Ngiants, *vproj_bestfit) + vproj_fit_offset
-    if showplots: plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel,\
-         wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, saveplotspdf)
+    if make_summary_page or saveplotspdf:
+        fig1 = plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel,\
+            wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, saveplotspdf)
+        
+
     ### if requested, merge giant-only FoF groups through iterative combination
     if iterative_giant_only_groups:
         revisedgiantgrpid = prob_iterative_combination_giants(radeg[giantsel],dedeg[giantsel],cz[giantsel]/SPEED_OF_LIGHT,czerr[giantsel]/SPEED_OF_LIGHT,giantfofid,\
@@ -283,8 +292,9 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
         gd_vproj_bestfit_err = np.zeros(len(gd_vproj_fit_params))*1.
     rproj_for_iteration = lambda M: gd_rproj_fit_multiplier*decayexp(M, *gd_rproj_bestfit)
     vproj_for_iteration = lambda M: gd_vproj_fit_multiplier*decayexp(M, *gd_vproj_bestfit) + gd_vproj_fit_offset
-    if showplots: plot_rproj_vproj_2(g3grpid, absrmag, gdsel, gdtotalmag, gdrelprojdist, gdrelvel, magbincenters, binsel, gdmedianrproj,\
-         gdmedianrelvel, gd_rproj_bestfit, gd_vproj_bestfit, saveplotspdf)
+    if make_summary_page or saveplotspdf: 
+        fig2=plot_rproj_vproj_2(g3grpid, absrmag, gdsel, gdtotalmag, gdrelprojdist, gdrelvel, magbincenters, binsel, gdmedianrproj,\
+             gdmedianrelvel, gd_rproj_bestfit, gd_vproj_bestfit, saveplotspdf)
 
     #### --------- iterative combination to make dwarf-only groups
     assert (g3grpid[(absrmag<=dwarfgiantdivide)]!=-99.).all(), "Not all giants are grouped." 
@@ -293,7 +303,15 @@ def prob_g3groupfinder_luminosity(radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,
     itassocid = dwarf_iterative_combination(radeg[_ungroupeddwarf_sel], dedeg[_ungroupeddwarf_sel], cz[_ungroupeddwarf_sel]/SPEED_OF_LIGHT, \
         czerr[_ungroupeddwarf_sel]/SPEED_OF_LIGHT, absrmag[_ungroupeddwarf_sel],rproj_for_iteration, vproj_for_iteration, pfof_Pth, cosmo, starting_id=np.max(g3grpid)+1)
     g3grpid[_ungroupeddwarf_sel]=itassocid
+
     ### ------------  return quantities
+    if make_summary_page: 
+        figs = get_extra_biopage_plots(g3grpid,radeg,dedeg,cz/SPEED_OF_LIGHT,czerr/SPEED_OF_LIGHT,absrmag,dwarfgiantdivide,volume,H0)
+        for fig in figs:
+            PDF.savefig(fig)
+        PDF.savefig(fig1)
+        PDF.savefig(fig2)
+        PDF.close()
     return g3grpid, g3ssid, fof_sep, rproj_bestfit, rproj_bestfit_err, vproj_bestfit, vproj_bestfit_err, gd_rproj_bestfit,\
          gd_rproj_bestfit_err, gd_vproj_bestfit, gd_vproj_bestfit_err 
 
@@ -661,7 +679,6 @@ def prob_giant_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,
     nndist, nnind = kdt.query(coords,k=2)
     nndist=nndist[:,1] # ignore self match
     nnind=nnind[:,1]
-
     # go through potential groups and adjust membership for input galaxies
     alreadydone=np.zeros(len(uniqgrpid)).astype(int)
     ct=0
@@ -1089,7 +1106,8 @@ def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, 
     axs[1].set_ylim(0,1000)
     plt.tight_layout()
     if saveplotspdf: plt.savefig("../figures/rproj_vproj_cal.pdf",dpi=300)
-    plt.show()
+    plt.close()
+    return fig
 
 def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelprojdist, ecogdrelvel, magbincenters, binsel, gdmedianrproj, gdmedianrelvel, poptr, poptv,\
     saveplotspdf):
@@ -1137,7 +1155,8 @@ def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelpr
     ax1.legend(loc='best',fontsize=8, framealpha=1)
     plt.tight_layout()
     if saveplotspdf: plt.savefig("../figures/itercombboundaries.pdf")
-    plt.show()
+    plt.close()
+    return fig
 
 def sigmarange(x):
     q84, q16 = np.percentile(x, [84 ,16])
@@ -1149,8 +1168,6 @@ def giantmodel(x, a, b):
 def decayexp(x, a, b):
     #return np.abs(a)*np.exp(-1*np.abs(b)*x)#+np.abs(d)
     return np.abs(a)*np.exp(-1*np.abs(b)*(x+19.5))#+np.abs(d)
-
-
 
 def get_int_mag(galmags, grpid):
     """
@@ -1179,6 +1196,59 @@ def get_int_mag(galmags, grpid):
         grpmags[sel]=totalmag
     return grpmags
 
+def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,volume,H0):
+    # text
+    firstpage = plt.figure(figsize=(11.69,8.27))
+    firstpage.clf()
+    lines = [
+        f'Date generated: {datetime.now()}',
+        f'{len(grpid)} Galaxies in Sample '+r'($M_r$ Floor'+f'={np.max(absrmag):0.2f})',
+        f'Redshift range: {np.min(zz):0.5f} to {np.max(zz):0.5f}',
+        f'Comoving Volume = {volume:0.4E} '+r'Mpc$^3$ (assumes $H_0$='+f'{H0:0.1f} km/s/Mpc)',
+        f'{len(np.unique(grpid))} Unique Groups'+r' (including $N_{\rm galaxies}=1$ Groups)',
+    ]
+    text='\n'.join(lines)
+    firstpage.text(0.1,0.5,text,transform=firstpage.transFigure, size=14, ha='left')
+    plt.close()
+    
+    # mult func
+    fig1 = plt.figure()
+    grpn = np.unique(grpid,return_counts=True)[1]
+    hbins = np.arange(0.5,40.5,1)
+    plt.hist(grpn, bins=hbins)
+    plt.xlim(0.5,40.5)
+    plt.yscale('log')
+    plt.xlabel(r'Group $N_{\rm galaxies}$')
+    plt.ylabel(r'Number of Groups')
+    n_high_N = len(grpn[grpn>np.max(hbins)])
+    if n_high_N>0:
+        plt.annotate(xy=(0.5,0.6), xycoords='axes fraction', text=f'+{n_high_N} N>{np.max(hbins)} Groups')
+    plt.tight_layout()
+    plt.close()
+
+    # ra/dec
+    fig2,axs = plt.subplots(ncols=2)
+    axs[0].scatter(radeg, dedeg, color='k', s=2, alpha=0.2)
+    axs[0].set_xlabel('RA [deg]')
+    axs[0].set_ylabel('DEC [deg]')
+    axs[1].hist(zz, bins='fd')
+    axs[1].set_yscale('log')
+    axs[1].set_xlabel('$z$')
+    axs[1].set_ylabel('Number of Galaxies')
+    plt.tight_layout()
+    plt.close()
+
+    # lum func
+    fig3=plt.figure()
+    plt.hist(absrmag, bins='fd')
+    plt.xlabel(r'$M_r$')
+    plt.ylabel('Number of Galaxies')
+    plt.yscale('log')
+    plt.gca().invert_xaxis()
+    plt.tight_layout()
+    plt.close()
+
+    return firstpage, fig1, fig2, fig3
 
 # =============================================================================== #
 # =============================================================================== #
@@ -1194,10 +1264,10 @@ if __name__=='__main__':
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
 
-    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'showplots':True,'saveplotspdf':False,
+    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':'eco.pdf','saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
-           'pfof_Pth' : 0.999, \
+           'pfof_Pth' : 0.99, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
 
     pg3out=prob_g3groupfinder_luminosity(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
