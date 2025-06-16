@@ -1,19 +1,19 @@
 import matplotlib
+import math
 matplotlib.use('TkAgg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from astropy.cosmology import LambdaCDM, z_at_value
 import astropy.units as uu
+from astropy.cosmology import LambdaCDM, z_at_value
+from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
 from scipy.interpolate import interp1d 
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
+from scipy.special import erf as scipy_erf
 from smoothedbootstrap import smoothedbootstrap as sbs
 from center_binned_stats import center_binned_stats
-from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
-import math
-from scipy.special import erf as scipy_erf
 from robustats import weighted_median
 from copy import deepcopy
 from datetime import datetime
@@ -409,6 +409,12 @@ class pg3(object):
         see multiplicity_function
         """
         return multiplicity_function(self.g3grpid, return_by_galaxy=return_by_galaxy)
+
+    def get_dwarf_grpn_by_group(self):
+        assert (self.absrmag<0).all(), 'M* not currently supported for `get_dwarf_grpn_by_group`.'
+        df = pd.DataFrame({'grp':self.g3grpid, 'absrmag':self.absrmag})
+        dogrps = df.groupby('grp').filter(lambda g: (g.absrmag>self.dwarfgiantdivide).all())
+        return multiplicity_function(dogrps.grp.to_numpy(), return_by_galaxy=False)
 
     def get_group_centers(self, return_z_pdfs):
         """
@@ -1397,6 +1403,7 @@ def angular_separation(ra1,dec1,ra2,dec2):
 if __name__=='__main__':
     import time
     t1 = time.time()
+
     eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
     eco = eco[eco.absrmag<-17.33] # just to test
     eco.loc[:,'czerr'] = eco.cz*0 + 20
@@ -1405,7 +1412,6 @@ if __name__=='__main__':
     omega_de = 0.7
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
-
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':'eco.pdf','saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
@@ -1420,7 +1426,8 @@ if __name__=='__main__':
     bins = np.arange(0.5,300.5,1)
     plt.figure()
     plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
-    plt.hist(multiplicity_function(eco.pg3grp, return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
+    plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
+    plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
     plt.yscale('log')
     plt.xlabel(r"Group $N_{\rm galaxies}$")
     plt.xlim(0,50)
