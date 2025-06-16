@@ -43,7 +43,8 @@ class pg3(object):
                      gd_rproj_fit_multiplier=None, gd_vproj_fit_guess=None, gd_vproj_fit_params = None, gd_vproj_fit_multiplier=None,gd_vproj_fit_offset=None,
                      gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, saveplotspdf=False, summary_page_savepath=None):
         """
-        Identify galaxy groups in redshift space using the RESOLVE-G3 algorithm (Hutchens et al. 2022).
+        Identify galaxy groups in redshift space using the probabilistic G3 algorithm (Hutchens+2025, in prep.)
+        A modified and extended version of the algorithm presented in Hutchens + 2023.
 
         Parameters
         -------------------
