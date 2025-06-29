@@ -8,7 +8,6 @@ import pandas as pd
 import astropy.units as uu
 from astropy.cosmology import LambdaCDM, z_at_value
 from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
-from scipy.interpolate import interp1d 
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 from scipy.special import erf as scipy_erf
@@ -657,15 +656,15 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupdec[sel] = galaxydec[sel]
             groupz[sel] = galaxyz[sel]#*cspeed
         else:
-            xmesh = np.arange(np.min(galaxyz[sel]*galaxyxx[sel])-5*np.max(np.abs(galaxyzerr[sel]*galaxyxx[sel])), np.max(galaxyz[sel]*galaxyxx[sel])+5*np.max(np.abs(galaxyzerr[sel]*galaxyxx[sel])),\
-                              np.min(galaxyzerr[sel])/1000.)
-            xcen = get_median_eCDF(xmesh, np.sum(gauss_vectorized(xmesh, galaxyz[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyxx[sel]),axis=0))
-            ymesh = np.arange(np.min(galaxyz[sel]*galaxyyy[sel])-5*np.max(np.abs(galaxyzerr[sel]*galaxyyy[sel])), np.max(galaxyz[sel]*galaxyyy[sel])+5*np.max(np.abs(galaxyzerr[sel]*galaxyyy[sel])),\
-                              np.min(galaxyzerr[sel])/1000.)
-            ycen = get_median_eCDF(ymesh, np.sum(gauss_vectorized(ymesh, galaxyz[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyyy[sel]),axis=0))
-            zmesh = np.arange(np.min(galaxyz[sel]*galaxyzz[sel])-5*np.max(np.abs(galaxyzerr[sel]*galaxyzz[sel])), np.max(galaxyz[sel]*galaxyzz[sel])+5*np.max(np.abs(galaxyzerr[sel]*galaxyzz[sel])),\
-                              np.min(galaxyzerr[sel])/1000.)
-            zcen = get_median_eCDF(zmesh, np.sum(gauss_vectorized(zmesh, galaxyz[sel]*galaxyzz[sel], galaxyzerr[sel]*galaxyzz[sel]),axis=0))    
+            mesh_spacing = np.min(galaxyzerr[sel])/1000.
+            gx,gy,gz = galaxyz[sel]*galaxyxx[sel], galaxyz[sel]*galaxyyy[sel], galaxyz[sel]*galaxyzz[sel]
+            gxerr,gyerr,gzerr = galaxyzerr[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyzz[sel]
+            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), mesh_spacing)
+            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), mesh_spacing) 
+            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), mesh_spacing)
+            xcen = get_median_eCDF(xmesh, np.sum(gauss_vectorized(xmesh, gx, gxerr),axis=0))
+            ycen = get_median_eCDF(ymesh, np.sum(gauss_vectorized(ymesh, gy, gyerr),axis=0))
+            zcen = get_median_eCDF(zmesh, np.sum(gauss_vectorized(zmesh, gz, gzerr),axis=0))  
             redshiftcen = np.sqrt(xcen*xcen + ycen*ycen + zcen*zcen)
             deccen = np.arcsin(zcen/redshiftcen)*180.0/np.pi # degrees
             if (ycen >=0 and xcen>=0):
@@ -859,9 +858,9 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     fitingroup2 = (seed2radialsep<rprojboundary(totalgrpN)).all()
     if fitingroup1 and fitingroup2:
         eps_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(totalgrpN)
-        interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
-        D1 = interp1d(seed1pdf['zmesh'], seed1pdf['pdf'][0], **interpkwargs)
-        D2 = interp1d(seed2pdf['zmesh'], seed2pdf['pdf'][0], **interpkwargs)
+        #interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
+        D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0) 
+        D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
         integrand = lambda zprime, z: D1(z)*D2(zprime)
         zmin = np.min([np.min(seed1pdf['zmesh']), np.min(seed2pdf['zmesh'])])
         zmax = np.max([np.max(seed1pdf['zmesh']), np.max(seed2pdf['zmesh'])])
@@ -1172,8 +1171,8 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     if fitingroup1 and fitingroup2:
         gamma_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(memberintmag)[0]
         interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
-        D1 = interp1d(seed1pdf['zmesh'], seed1pdf['pdf'][0], **interpkwargs)
-        D2 = interp1d(seed2pdf['zmesh'], seed2pdf['pdf'][0], **interpkwargs)
+        D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0)
+        D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
         integrand = lambda zprime, z: D1(z)*D2(zprime)
         zmin = np.min([np.min(seed1pdf['zmesh']), np.min(seed2pdf['zmesh'])])
         zmax = np.max([np.max(seed1pdf['zmesh']), np.max(seed2pdf['zmesh'])])
@@ -1403,7 +1402,6 @@ def angular_separation(ra1,dec1,ra2,dec2):
 if __name__=='__main__':
     import time
     t1 = time.time()
-
     eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
     eco = eco[eco.absrmag<-17.33] # just to test
     eco.loc[:,'czerr'] = eco.cz*0 + 20
@@ -1428,6 +1426,8 @@ if __name__=='__main__':
     plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
     plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
     plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
+    ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
+    plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3D Dwarf-Only Groups')
     plt.yscale('log')
     plt.xlabel(r"Group $N_{\rm galaxies}$")
     plt.xlim(0,50)
