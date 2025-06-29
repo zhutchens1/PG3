@@ -916,8 +916,8 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     velocity_boundary=np.asarray(velocity_boundary)
     radius_boundary=np.asarray(radius_boundary)
     Nfaint = len(faintra)
-    assoc_grpid = np.zeros(Nfaint).astype(int)
-    assoc_flag = np.zeros(Nfaint).astype(int)
+    assoc_grpid = np.zeros(Nfaint,dtype=int)
+    assoc_flag = np.zeros(Nfaint,dtype=int)
     prob_values=np.zeros(Nfaint)
 
     # resize group coordinates to be the # of groups, not # galaxies
@@ -928,6 +928,7 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpid = grpid[uniqind]
     velocity_boundary=velocity_boundary[uniqind]
     radius_boundary=radius_boundary[uniqind]
+    zrange = (1+grpz) * velocity_boundary/SPEED_OF_LIGHT
 
     # Make Nfaints x Ngroups grids for transverse/LOS distances from group centers
     faintphi = (faintra * np.pi/180.)[:,None]
@@ -939,28 +940,27 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     half_angle = np.arcsin((np.sin((fainttheta-grptheta)/2.0)**2.0 + np.sin(fainttheta)*np.sin(grptheta)*np.sin((faintphi-grpphi)/2.0)**2.0)**0.5)
     Rp = (faint_cmvg + grp_cmvg) * (half_angle)/2
     DeltaV = SPEED_OF_LIGHT*np.abs(faintz[:,None] - grpz)/(1+grpz)
-    for gg in range(0,len(grpid)):
-        for fg in range(0,Nfaint):
-            quick__test = ((Rp[fg][gg]<radius_boundary[gg]) & (DeltaV[fg][gg]<6000))
-            if quick__test:
-                zrange = (1+grpz[gg])*velocity_boundary[gg]/SPEED_OF_LIGHT
-                sel = np.where(grpzpdf['grpid']==grpid[gg])
-                pdfneeded = grpzpdf['pdf'][sel]
-                Poverlap = dwarf_association_integral(grpzpdf['zmesh'], pdfneeded[0], faintz[fg], faintzerr[fg], zrange, zrange)
-                if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
+    grpzpdf_dict = {gid: pdf for gid, pdf in zip(grpzpdf['grpid'], grpzpdf['pdf'])}
+
+    for gg in range(len(grpid)):
+        gid = grpid[gg]
+        mask = (Rp[:, gg] < radius_boundary[gg]) & (DeltaV[:, gg] < 6000)
+        indices = np.where(mask)[0]
+        if len(indices) == 0:
+            continue
+        
+        for fg in indices:
+            Poverlap = dwarf_association_integral(grpzpdf['zmesh'], grpzpdf_dict.get(gid, None), faintz[fg], faintzerr[fg], zrange[gg], zrange[gg])
+            if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
+                prob_values[fg]=Poverlap
+                assoc_grpid[fg]=grpid[gg]
+                assoc_flag[fg]=1
+            elif (Poverlap>Pth) and (bool(assoc_flag[fg])):
+                # has already been assocated; is our new Poverlap better?
+                if Poverlap>prob_values[fg]:
                     prob_values[fg]=Poverlap
                     assoc_grpid[fg]=grpid[gg]
                     assoc_flag[fg]=1
-                elif (Poverlap>Pth) and (bool(assoc_flag[fg])):
-                    # has already been assocated; is our new Poverlap better?
-                    if Poverlap>prob_values[fg]:
-                        prob_values[fg]=Poverlap
-                        assoc_grpid[fg]=grpid[gg]
-                        assoc_flag[fg]=1
-                else:
-                    pass
-            else:
-                pass
     # assign group ID numbers to galaxies that didn't associate
     still_isolated = np.where(assoc_grpid==0)
     assoc_grpid[still_isolated]=np.arange(np.max(grpid)+1, np.max(grpid)+1+len(still_isolated[0]), 1)
