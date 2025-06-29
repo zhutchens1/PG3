@@ -842,14 +842,6 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(combinedra[seed2sel],combineddec[seed2sel],combinedz[seed2sel], combinedzerr[seed2sel] ,combinedgalgrpid[seed2sel],True)
     allgrpra,allgrpdec,allgrpz,_ = prob_group_skycoords(combinedra, combineddec, combinedz, combinedzerr, np.zeros(len(combinedra)), False)
     totalgrpN = len(seed1grpra)+len(seed2grpra)
-    #grp1v = (cosmo.H(seed1grpz)*cosmo.scale_factor(seed1grpz)*cosmo.comoving_distance(seed1grpz)).value
-    #grp2v = (cosmo.H(seed2grpz)*cosmo.scale_factor(seed2grpz)*cosmo.comoving_distance(seed2grpz)).value
-    #v12 = np.abs(grp2v[0]-grp1v[0])/(1-(grp2v[0]*grp1v[0]/(cc*cc)))
-    #as_ = fof.angular_separation(seed1grpra[0], seed1grpdec[0], seed2grpra[0], seed2grpdec[0])
-    #r12 = 0.5*(cosmo.comoving_transverse_distance(seed1grpz[0]).value + cosmo.comoving_transverse_distance(seed2grpz[0]).value)*as_
-    #radialcondition = (v12 < vprojboundary(totalgrpN))
-    #transvcondition = (r12 < rprojboundary(totalgrpN))
-    #fitingroup = radialcondition & transvcondition
     seed1radialsep = (cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],\
         allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
     seed2radialsep = (cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],\
@@ -858,7 +850,6 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     fitingroup2 = (seed2radialsep<rprojboundary(totalgrpN)).all()
     if fitingroup1 and fitingroup2:
         eps_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(totalgrpN)
-        #interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
         D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0) 
         D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
         integrand = lambda zprime, z: D1(z)*D2(zprime)
@@ -1170,7 +1161,6 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     fitingroup2 = (seed2radialsep<rprojboundary(memberintmag)).all()
     if fitingroup1 and fitingroup2:
         gamma_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(memberintmag)[0]
-        interpkwargs = {'bounds_error' : False, 'fill_value' : 0}
         D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0)
         D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
         integrand = lambda zprime, z: D1(z)*D2(zprime)
