@@ -814,28 +814,6 @@ def prob_giant_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,
             alreadydone[idx] = 1
     return refinedgrpid
  
-#    for idx, uid in enumerate(uniqgrpid):
-#        # find the nearest neighbor group
-#        nbridx = nnind[idx]
-#        Gpgalsel=np.where(grpid==uid)
-#        GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
-#        combinedra,combineddec,combinedz,combinedzerr= np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])),np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
-#        #combinedgroupN = int(groupN[Gpgalsel][0])+int(groupN[GNNgalsel][0])
-#        combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
-#        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo) and (not alreadydone[idx]) and (not alreadydone[nbridx]):
-#            # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
-#            nbrnnidx = nnind[nbridx]
-#            if idx==nbrnnidx:
-#                # change group ID of NN galaxies
-#                refinedgrpid[GNNgalsel]=int(grpid[Gpgalsel][0])
-#                alreadydone[idx]=1
-#                alreadydone[nbridx]=1
-#            else:
-#                alreadydone[idx]=1
-#        else:
-#            alreadydone[idx]=1
-#    return refinedgrpid
-
 def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo):
     """
     Evalaute whether two giant-only groups satisfy the specified boundary criteria.
@@ -1114,33 +1092,57 @@ def dwarf_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,  gal
     nndist, nnind = kdt.query(coords,k=2)
     nndist=nndist[:,1] # ignore self match
     nnind=nnind[:,1]
-    
-    # go through potential groups and adjust membership for input galaxies 
-    alreadydone=np.zeros(len(uniqgrpid)).astype(int)
-    ct=0
-    for idx, uid in enumerate(uniqgrpid):
-        # find the nearest neighbor group
+    reciprocal = np.arange(len(uniqgrpid))==nnind[nnind]
+    alreadydone=np.zeros(len(uniqgrpid), dtype=int)
+    for idx in np.where(reciprocal & ~alreadydone)[0]:
         nbridx = nnind[idx]
-        Gpgalsel=np.where(grpid==uid)
-        GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
-        combinedra,combineddec,combinedz,combinedzerr = np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),\
-            np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])), np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
+        if alreadydone[nbridx]:
+            continue
+        uid = uniqgrpid[idx]
+        nbr_uid = uniqgrpid[nbridx]
+        Gpgalsel = (grpid==uid)
+        GNNgalsel = (grpid==nbr_uid)
+
+        combinedra = np.hstack((galaxyra[Gpgalsel], galaxyra[GNNgalsel]))
+        combineddec = np.hstack((galaxydec[Gpgalsel], galaxydec[GNNgalsel]))
+        combinedz = np.hstack((galaxyz[Gpgalsel], galaxyz[GNNgalsel]))
+        combinedzerr = np.hstack((galaxyzerr[Gpgalsel], galaxyzerr[GNNgalsel]))
+        combinedgalgrpid = np.hstack((grpid[Gpgalsel], grpid[GNNgalsel]))
         combinedmag = np.hstack((galaxymag[Gpgalsel], galaxymag[GNNgalsel]))
-        combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
-        condition = dwarfic_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, combinedmag, rprojboundary,vprojboundary, pthresh, cosmo)
-        if condition and (not alreadydone[idx]) and (not alreadydone[nbridx]):
-            # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
-            nbrnnidx = nnind[nbridx]
-            if idx==nbrnnidx:
-                # change group ID of NN galaxies
-                associd[GNNgalsel]=int(grpid[Gpgalsel][0])
-                alreadydone[idx]=1
-                alreadydone[nbridx]=1
-            else:
-                alreadydone[idx]=1
+        if dwarfic_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, combinedmag, rprojboundary,vprojboundary, pthresh, cosmo):
+            associd[GNNgalsel] = grpid[Gpgalsel][0]
+            alreadydone[idx] = 1
+            alreadydone[nbridx] = 1
         else:
-            alreadydone[idx]=1
-    return associd  
+            alreadydone[idx] = 1
+    return associd
+
+## go through potential groups and adjust membership for input galaxies 
+#alreadydone=np.zeros(len(uniqgrpid)).astype(int)
+#ct=0
+#for idx, uid in enumerate(uniqgrpid):
+#    # find the nearest neighbor group
+#    nbridx = nnind[idx]
+#    Gpgalsel=np.where(grpid==uid)
+#    GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
+#    combinedra,combineddec,combinedz,combinedzerr = np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),\
+#        np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])), np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
+#    combinedmag = np.hstack((galaxymag[Gpgalsel], galaxymag[GNNgalsel]))
+#    combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
+#    condition = dwarfic_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, combinedmag, rprojboundary,vprojboundary, pthresh, cosmo)
+#    if condition and (not alreadydone[idx]) and (not alreadydone[nbridx]):
+#        # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
+#        nbrnnidx = nnind[nbridx]
+#        if idx==nbrnnidx:
+#            # change group ID of NN galaxies
+#            associd[GNNgalsel]=int(grpid[Gpgalsel][0])
+#            alreadydone[idx]=1
+#            alreadydone[nbridx]=1
+#        else:
+#            alreadydone[idx]=1
+#    else:
+#        alreadydone[idx]=1
+#return associd  
 
 
 def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojboundary, vprojboundary, pthresh, cosmo):
