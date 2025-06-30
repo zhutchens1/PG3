@@ -18,7 +18,7 @@ from center_binned_stats import center_binned_stats
 from robustats import weighted_median
 from copy import deepcopy
 from datetime import datetime
-
+from joblib import Parallel, delayed
 import warnings
 with warnings.catch_warnings():
     warnings.simplefilter("once",IntegrationWarning)
@@ -42,7 +42,7 @@ class pg3(object):
                      iterative_giant_only_groups=False, n_bootstraps=1000, rproj_fit_guess=None, rproj_fit_params = None, rproj_fit_multiplier=None,\
                      vproj_fit_guess = None, vproj_fit_params = None, vproj_fit_multiplier=None, vproj_fit_offset=0, gd_rproj_fit_guess=None, gd_rproj_fit_params = None,\
                      gd_rproj_fit_multiplier=None, gd_vproj_fit_guess=None, gd_vproj_fit_params = None, gd_vproj_fit_multiplier=None,gd_vproj_fit_offset=None,
-                     gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, saveplotspdf=False, summary_page_savepath=None):
+                     gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, ncores=None, saveplotspdf=False, summary_page_savepath=None):
         """
         Identify galaxy groups in redshift space using the probabilistic G3 algorithm (Hutchens+2025, in prep.)
         A modified and extended version of the algorithm presented in Hutchens + 2023.
@@ -182,6 +182,7 @@ class pg3(object):
         self.gd_vproj_fit_multiplier = gd_vproj_fit_multiplier
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
+        self.ncores = ncores
         self.giantcalbounds = (np.array([0,0]), np.array([1e4,1e4]))
 
     def find_groups(self):
@@ -429,7 +430,7 @@ class pg3(object):
 #################################################
 #################################################
 #################################################
-def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True):
+def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
     """
     -----
     Compute group membership from galaxies' equatorial  coordinates using a probabilitiy
@@ -449,6 +450,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
         Pth (float): Threshold probability from which to construct the group catalog. If None, the
             function will return a NxN matrix of friendship probabilities.
         printConf (bool, default True): bool indicating whether to print confirmation at the end.
+        ncores (int, # of cores for multiprocessing, default None = no multiprocessing)
     Returns:
         grpid (np.array): list containing unique group ID numbers for each target in the input coordinates.
                 The list will have shape len(ra).
@@ -479,19 +481,31 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc/h
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies))
+    np.fill_diagonal(prob_dlos,1)
     c=SPEED_OF_LIGHT
     VL_lower = VL_lower / c
     VL_upper = VL_upper / c
-    for i in range(0,Ngalaxies):
-        for j in range(0, i+1):
-            if j<i and dperp[i][j]<=perpll:
-                val = quad(pfof_integral_asym, 0, 100, args=(cz[i], czerr[i], cz[j], czerr[j], VL_upper[i], VL_lower[i]),\
-                           points=np.float64([cz[i]/c-5*czerr[i]/c,cz[i]/c-3*czerr[i]/c, cz[i]/c, cz[i]/c+3*czerr[i]/c, cz[i]/c+5*czerr[i]/c]),\
-                            wvar=cz[i]/c)
-                prob_dlos[i][j]=val[0]
-                prob_dlos[j][i]=val[0]
-            elif i==j:
-                prob_dlos[i][j]=1
+    def compute_prob(i,j):
+        return  i,j,quad(pfof_integral_asym, 0, 100, args=(cz[i], czerr[i], cz[j], czerr[j], VL_upper[i], VL_lower[i]),\
+                points=np.float64([cz[i]/c-5*czerr[i]/c,cz[i]/c-3*czerr[i]/c, cz[i]/c, cz[i]/c+3*czerr[i]/c, cz[i]/c+5*czerr[i]/c]),wvar=cz[i]/c)[0]
+    if ncores==None:
+        for i in range(0,Ngalaxies):
+            for j in range(0, i+1):
+                if j<i and dperp[i][j]<=perpll:
+                    val = compute_prob(i,j)
+                    prob_dlos[i][j]=val[-1]
+                    prob_dlos[j][i]=val[-1]
+    else:
+        i_array, j_array = np.where(dperp < perpll)
+        sel = (i_array != j_array)
+        i_array = i_array[sel]
+        j_array = j_array[sel]
+        results = Parallel(n_jobs=ncores)(delayed(compute_prob)(i, j) for (i,j) in zip(i_array,j_array))
+        for res in results:
+            if res is not None:
+                i, j, val = res
+                prob_dlos[i][j] = val
+                prob_dlos[j][i] = val
 
     # Produce friendship matrix and return groups
     index = np.where(np.logical_and(prob_dlos>Pth, dperp<=perpll))
@@ -840,17 +854,26 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     uniqIDnums = np.unique(combinedgalgrpid)
     assert len(uniqIDnums)==2, "galgrpid must have two unique entries (two seed groups)."
     seed1sel = (combinedgalgrpid==uniqIDnums[0])
-    seed1grpra,seed1grpdec,seed1grpz,seed1pdf = prob_group_skycoords(combinedra[seed1sel],combineddec[seed1sel],combinedz[seed1sel], combinedzerr[seed1sel] ,combinedgalgrpid[seed1sel],True)
     seed2sel = (combinedgalgrpid==uniqIDnums[1])
+    seed1grpra,seed1grpdec,seed1grpz,seed1pdf = prob_group_skycoords(combinedra[seed1sel],combineddec[seed1sel],combinedz[seed1sel], combinedzerr[seed1sel] ,combinedgalgrpid[seed1sel],True)
     seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(combinedra[seed2sel],combineddec[seed2sel],combinedz[seed2sel], combinedzerr[seed2sel] ,combinedgalgrpid[seed2sel],True)
     allgrpra,allgrpdec,allgrpz,_ = prob_group_skycoords(combinedra, combineddec, combinedz, combinedzerr, np.zeros(len(combinedra)), False)
     totalgrpN = len(seed1grpra)+len(seed2grpra)
-    seed1radialsep = (cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],\
-        allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
-    seed2radialsep = (cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],\
-        allgrpdec[0],seed2grpra[0],seed2grpdec[0])/2.)
-    fitingroup1 = (seed1radialsep<rprojboundary(totalgrpN)).all()
-    fitingroup2 = (seed2radialsep<rprojboundary(totalgrpN)).all()
+
+    # Precompute comoving distances
+    allgrpz0_dist = cosmo.comoving_transverse_distance(allgrpz[0]).to_value()
+    seed1grpz0_dist = cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()
+    seed2grpz0_dist = cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()
+
+    # Compute radial separations
+    angsep1 = angular_separation(allgrpra[0], allgrpdec[0], seed1grpra[0], seed1grpdec[0])
+    angsep2 = angular_separation(allgrpra[0], allgrpdec[0], seed2grpra[0], seed2grpdec[0])
+    seed1radialsep = (seed1grpz0_dist + allgrpz0_dist) * (angsep1 / 2.)
+    seed2radialsep = (seed2grpz0_dist + allgrpz0_dist) * (angsep2 / 2.)
+    Rp = rprojboundary(totalgrpN)
+    fitingroup1 = seed1radialsep < Rp
+    fitingroup2 = seed2radialsep < Rp 
+
     if fitingroup1 and fitingroup2:
         eps_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(totalgrpN)
         D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0) 
@@ -1117,34 +1140,6 @@ def dwarf_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,  gal
             alreadydone[idx] = 1
     return associd
 
-## go through potential groups and adjust membership for input galaxies 
-#alreadydone=np.zeros(len(uniqgrpid)).astype(int)
-#ct=0
-#for idx, uid in enumerate(uniqgrpid):
-#    # find the nearest neighbor group
-#    nbridx = nnind[idx]
-#    Gpgalsel=np.where(grpid==uid)
-#    GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
-#    combinedra,combineddec,combinedz,combinedzerr = np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),\
-#        np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])), np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
-#    combinedmag = np.hstack((galaxymag[Gpgalsel], galaxymag[GNNgalsel]))
-#    combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
-#    condition = dwarfic_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, combinedmag, rprojboundary,vprojboundary, pthresh, cosmo)
-#    if condition and (not alreadydone[idx]) and (not alreadydone[nbridx]):
-#        # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
-#        nbrnnidx = nnind[nbridx]
-#        if idx==nbrnnidx:
-#            # change group ID of NN galaxies
-#            associd[GNNgalsel]=int(grpid[Gpgalsel][0])
-#            alreadydone[idx]=1
-#            alreadydone[nbridx]=1
-#        else:
-#            alreadydone[idx]=1
-#    else:
-#        alreadydone[idx]=1
-#return associd  
-
-
 def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojboundary, vprojboundary, pthresh, cosmo):
     """
     Check whether two potential groups can be merged based on the integrated luminosity of the 
@@ -1177,15 +1172,21 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     uniqIDnums = np.unique(galgrpid)
     assert len(uniqIDnums)==2, "galgrpid must have two unique entries (two seed groups)."
     seed1sel = (galgrpid==uniqIDnums[0])
-    seed1grpra,seed1grpdec,seed1grpz, seed1pdf = prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel], galzerr[seed1sel], galgrpid[seed1sel], True)
     seed2sel = (galgrpid==uniqIDnums[1])
-    seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(galra[seed2sel],galdec[seed2sel],galz[seed2sel],galzerr[seed2sel], galgrpid[seed2sel], True)
+    seed1grpra,seed1grpdec,seed1grpz,seed1pdf = prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel],galzerr[seed1sel],galgrpid[seed1sel], True)
+    seed2grpra,seed2grpdec,seed2grpz,seed2pdf = prob_group_skycoords(galra[seed2sel],galdec[seed2sel],galz[seed2sel],galzerr[seed2sel],galgrpid[seed2sel], True)
     allgrpra,allgrpdec,allgrpz,_ = prob_group_skycoords(galra, galdec, galz, galzerr, np.zeros(len(galra)), False)
-    seed1radialsep = (cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],allgrpdec[0],seed1grpra[0],seed1grpdec[0])/2.)
-    seed2radialsep = (cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()+cosmo.comoving_transverse_distance(allgrpz[0]).to_value())*(angular_separation(allgrpra[0],allgrpdec[0],seed2grpra[0],seed2grpdec[0])/2.)
-    
-    fitingroup1 = (seed1radialsep<rprojboundary(memberintmag)).all()
-    fitingroup2 = (seed2radialsep<rprojboundary(memberintmag)).all()
+    # Compute radial separations
+    angsep1 = angular_separation(allgrpra[0], allgrpdec[0], seed1grpra[0], seed1grpdec[0])
+    angsep2 = angular_separation(allgrpra[0], allgrpdec[0], seed2grpra[0], seed2grpdec[0])
+    allgrpz0_dist = cosmo.comoving_transverse_distance(allgrpz[0]).to_value()
+    seed1grpz0_dist = cosmo.comoving_transverse_distance(seed1grpz[0]).to_value()
+    seed2grpz0_dist = cosmo.comoving_transverse_distance(seed2grpz[0]).to_value()
+    seed1radialsep = (seed1grpz0_dist + allgrpz0_dist) * (angsep1 / 2.)
+    seed2radialsep = (seed2grpz0_dist + allgrpz0_dist) * (angsep2 / 2.)
+    Rp = rprojboundary(memberintmag)[0]
+    fitingroup1 = seed1radialsep < Rp
+    fitingroup2 = seed2radialsep < Rp 
     if fitingroup1 and fitingroup2:
         gamma_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(memberintmag)[0]
         D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0)
@@ -1431,7 +1432,9 @@ if __name__=='__main__':
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.999, \
-           'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
+           'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True,\
+            'ncores' : 40,
+            })
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
     pg3grp=pg3ob.find_groups()[0]
