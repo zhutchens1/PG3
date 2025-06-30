@@ -10,6 +10,8 @@ from astropy.cosmology import LambdaCDM, z_at_value
 from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
+from scipy.sparse import csr_array
+from scipy.sparse.csgraph import connected_components
 from scipy.special import erf as scipy_erf
 from smoothedbootstrap import smoothedbootstrap as sbs
 from center_binned_stats import center_binned_stats
@@ -180,6 +182,7 @@ class pg3(object):
         self.gd_vproj_fit_multiplier = gd_vproj_fit_multiplier
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
+        self.giantcalbounds = (np.array([0,0]), np.array([1e4,1e4]))
 
     def find_groups(self):
         """
@@ -254,7 +257,7 @@ class pg3(object):
             else:
                 raise ValueError('Check group center definition (`center_mode`), only `average` or `giantaverage` (equivalent) currently supported')
             relvel = np.abs(giantgrpcz - self.cz[self.giantsel])/(1+giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
-            grp_ctd = cosmo.comoving_transverse_distance(giantgrpz).value
+            grp_ctd = self.cosmo.comoving_transverse_distance(giantgrpz).value
             relprojdist = (grp_ctd+grp_ctd)*np.sin(angular_separation(giantgrpra, giantgrpdec, self.radeg[self.giantsel],self.dedeg[self.giantsel])/2.0)
             giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
             uniqgiantgrpn, uniqindex = np.unique(giantgrpn, return_index=True)
@@ -268,14 +271,14 @@ class pg3(object):
                 resamples = [df_.sample(frac=1, replace=True) for ii in range(0,self.n_bootstraps)]
                 wavg_relprojdist_err[ii] = np.std([weighted_median(resamp.rpdist, 1/resamp.czerr) for resamp in resamples])
                 wavg_relvel_err[ii] = np.std([weighted_median(resamp.dv, 1/resamp.czerr) for resamp in resamples])
-            self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=self.rproj_fit_guess, maxfev=2000,sigma=wavg_relprojdist_err)
+            self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=self.rproj_fit_guess, maxfev=5000,sigma=wavg_relprojdist_err, bounds = self.giantcalbounds)
             self.rproj_bestfit_err = np.sqrt(np.diag(rproj_bestfit_cov))
         else:
             self.rproj_bestfit = np.array(self.rproj_fit_params)
             self.rproj_bestfit_err = np.zeros(2)*1.
         if self.vproj_fit_params is None:
             try:
-                self.vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel,  p0=self.vproj_fit_guess, maxfev=2000,sigma=wavg_relvel_err)
+                self.vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel,  p0=self.vproj_fit_guess, maxfev=5000,sigma=wavg_relvel_err, bounds = self.giantcalbounds)
                 self.vproj_bestfit_err = np.sqrt(np.diag(vproj_bestfit_cov))
             except RuntimeError:
                 print("Code failed at `get_giantFoF_calibrations` -- likely no Ngiants>1 groups.")
@@ -340,8 +343,8 @@ class pg3(object):
                  self.g3grpid[gdsel])
 
             gdrelvel = SPEED_OF_LIGHT*np.abs(self.cz[gdsel]/SPEED_OF_LIGHT - gdgrpz)/(1+gdgrpz)
-            ctd1 = cosmo.comoving_transverse_distance(gdgrpz).value
-            ctd2 = cosmo.comoving_transverse_distance(self.cz[gdsel]/SPEED_OF_LIGHT).value
+            ctd1 = self.cosmo.comoving_transverse_distance(gdgrpz).value
+            ctd2 = self.cosmo.comoving_transverse_distance(self.cz[gdsel]/SPEED_OF_LIGHT).value
             gdrelprojdist = (ctd1 + ctd2) * np.sin(angular_separation(gdgrpra, gdgrpdec, self.radeg[gdsel], self.dedeg[gdsel])/2.0)
             gdn = gdgrpn[gdsel]
             gdtotalmag = get_int_mag(self.absrmag[gdsel], self.g3grpid[gdsel])
@@ -498,6 +501,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     if printConf:
         print('PFoF complete!')
     return collapse_friendship_matrix(friendship)
+    #return connected_components(csr_array(friendship))[1]
 
 def pfof_integral_asym(z, czi, czerri, czj, czerrj, VLupper, VLlower):
     c=SPEED_OF_LIGHT
@@ -783,33 +787,54 @@ def prob_giant_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,
     ympc = cmvgdist * np.sin(pottheta)*np.sin(potphi)
     coords = np.array([xmpc, ympc, zmpc]).T
     kdt = cKDTree(coords)
-    nndist, nnind = kdt.query(coords,k=2)
-    nndist=nndist[:,1] # ignore self match
-    nnind=nnind[:,1]
+    _, nnind = kdt.query(coords,k=2)
+    nnind=nnind[:,1] # ignore self-match
     # go through potential groups and adjust membership for input galaxies
-    alreadydone=np.zeros(len(uniqgrpid)).astype(int)
-    ct=0
-    for idx, uid in enumerate(uniqgrpid):
-        # find the nearest neighbor group
+    reciprocal = np.arange(len(uniqgrpid))==nnind[nnind]
+    alreadydone=np.zeros(len(uniqgrpid), dtype=int)
+    for idx in np.where(reciprocal & ~alreadydone)[0]:
         nbridx = nnind[idx]
-        Gpgalsel=np.where(grpid==uid)
-        GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
-        combinedra,combineddec,combinedz,combinedzerr= np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])),np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
-        #combinedgroupN = int(groupN[Gpgalsel][0])+int(groupN[GNNgalsel][0])
-        combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
-        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo) and (not alreadydone[idx]) and (not alreadydone[nbridx]):
-            # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
-            nbrnnidx = nnind[nbridx]
-            if idx==nbrnnidx:
-                # change group ID of NN galaxies
-                refinedgrpid[GNNgalsel]=int(grpid[Gpgalsel][0])
-                alreadydone[idx]=1
-                alreadydone[nbridx]=1
-            else:
-                alreadydone[idx]=1
+        if alreadydone[nbridx]:
+            continue
+        uid = uniqgrpid[idx]
+        nbr_uid = uniqgrpid[nbridx]
+        Gpgalsel = (grpid==uid)
+        GNNgalsel = (grpid==nbr_uid)
+
+        combinedra = np.hstack((galaxyra[Gpgalsel], galaxyra[GNNgalsel]))
+        combineddec = np.hstack((galaxydec[Gpgalsel], galaxydec[GNNgalsel]))
+        combinedz = np.hstack((galaxyz[Gpgalsel], galaxyz[GNNgalsel]))
+        combinedzerr = np.hstack((galaxyzerr[Gpgalsel], galaxyzerr[GNNgalsel]))
+        combinedgalgrpid = np.hstack((grpid[Gpgalsel], grpid[GNNgalsel]))
+        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo):
+            refinedgrpid[GNNgalsel] = grpid[Gpgalsel][0]
+            alreadydone[idx] = 1
+            alreadydone[nbridx] = 1
         else:
-            alreadydone[idx]=1
+            alreadydone[idx] = 1
     return refinedgrpid
+ 
+#    for idx, uid in enumerate(uniqgrpid):
+#        # find the nearest neighbor group
+#        nbridx = nnind[idx]
+#        Gpgalsel=np.where(grpid==uid)
+#        GNNgalsel=np.where(grpid==uniqgrpid[nbridx])
+#        combinedra,combineddec,combinedz,combinedzerr= np.hstack((galaxyra[Gpgalsel],galaxyra[GNNgalsel])),np.hstack((galaxydec[Gpgalsel],galaxydec[GNNgalsel])),np.hstack((galaxyz[Gpgalsel],galaxyz[GNNgalsel])),np.hstack((galaxyzerr[Gpgalsel],galaxyzerr[GNNgalsel]))
+#        #combinedgroupN = int(groupN[Gpgalsel][0])+int(groupN[GNNgalsel][0])
+#        combinedgalgrpid = np.hstack((grpid[Gpgalsel],grpid[GNNgalsel]))
+#        if prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo) and (not alreadydone[idx]) and (not alreadydone[nbridx]):
+#            # check for reciprocity: is the nearest-neighbor of GNN Gp? If not, leave them both as they are and let it be handled during the next iteration.
+#            nbrnnidx = nnind[nbridx]
+#            if idx==nbrnnidx:
+#                # change group ID of NN galaxies
+#                refinedgrpid[GNNgalsel]=int(grpid[Gpgalsel][0])
+#                alreadydone[idx]=1
+#                alreadydone[nbridx]=1
+#            else:
+#                alreadydone[idx]=1
+#        else:
+#            alreadydone[idx]=1
+#    return refinedgrpid
 
 def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, combinedgalgrpid, rprojboundary, vprojboundary, pthresh, cosmo):
     """
