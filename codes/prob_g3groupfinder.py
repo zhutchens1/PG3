@@ -236,11 +236,11 @@ class pg3(object):
         self.giantsel = (self.absrmag<=self.dwarfgiantdivide)
         if self.fof_sep is not None:
             giantfofid = pfof_comoving(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel], self.czerr[self.giantsel],\
-                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0)
+                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0, ncores=self.ncores)
         else:
             self.fof_sep = (self.volume/np.sum(self.giantsel))**(1/3.)
             giantfofid = pfof_comoving(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel], self.czerr[self.giantsel], \
-                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0)
+                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0, ncores=self.ncores)
         self.g3grpid[self.giantsel] = giantfofid
         return None
 
@@ -496,8 +496,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
                     prob_dlos[i][j]=val[-1]
                     prob_dlos[j][i]=val[-1]
     else:
-        i_array, j_array = np.where(dperp < perpll)
-        sel = (i_array != j_array)
+        i_array, j_array = np.where(dperp <= perpll)
+        sel = (j_array < i_array)
         i_array = i_array[sel]
         j_array = j_array[sel]
         results = Parallel(n_jobs=ncores)(delayed(compute_prob)(i, j) for (i,j) in zip(i_array,j_array))
@@ -1433,7 +1433,7 @@ if __name__=='__main__':
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.999, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True,\
-            'ncores' : 60,
+            'ncores' : None,
             })
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
