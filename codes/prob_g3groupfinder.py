@@ -10,8 +10,8 @@ from astropy.cosmology import LambdaCDM, z_at_value
 from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
-from scipy.sparse import csr_array
-from scipy.sparse.csgraph import connected_components
+#from scipy.sparse import csr_array
+#from scipy.sparse.csgraph import connected_components
 from scipy.special import erf as scipy_erf
 from smoothedbootstrap import smoothedbootstrap as sbs
 from center_binned_stats import center_binned_stats
@@ -183,7 +183,7 @@ class pg3(object):
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
         self.ncores = ncores
-        self.giantcalbounds = (np.array([0,0]), np.array([1e4,1e4]))
+        self.giantcalbounds = (np.array([0.05,0.05]), np.array([1e4,1e4]))
 
     def find_groups(self):
         """
@@ -708,7 +708,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             zmesh = np.arange(0, np.max(galaxyz)+0.1, 20/cspeed)
         z_pdfs = np.zeros((len(galaxygrpid), len(zmesh)))
         for i,uid in enumerate(uniqidnumbers):
-            sel=np.where(galaxygrpid==uid)
+            sel=(galaxygrpid==uid)
             z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]),axis=0)
             z_pdfs[i]=z_pdfs[i]/simpson(z_pdfs[i],zmesh)
         pdfoutput = {'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers}
@@ -1433,7 +1433,7 @@ if __name__=='__main__':
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.999, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True,\
-            'ncores' : 40,
+            'ncores' : 60,
             })
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
