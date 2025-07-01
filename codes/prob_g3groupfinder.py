@@ -131,11 +131,11 @@ class pg3(object):
         saveplotspdf : False
             If True, rendered plots will be saved in a ./figures/ subfolder.
         """
-        self.radeg=np.array(radeg)
-        self.dedeg=np.array(dedeg)
-        self.cz=np.array(cz)
-        self.czerr=np.array(czerr)
-        self.absrmag=np.array(absrmag)
+        self.radeg=np.float32(radeg)
+        self.dedeg=np.float32(dedeg)
+        self.cz=np.float32(cz)
+        self.czerr=np.float32(czerr)
+        self.absrmag=np.float32(absrmag)
         assert (not np.isnan(self.radeg).any()), "RA values must not contain NaNs."
         assert (not np.isnan(self.dedeg).any()), "DEC values must not contain NaNs."
         assert (not np.isnan(self.cz).any()), "cz values must not contain NaNs."
