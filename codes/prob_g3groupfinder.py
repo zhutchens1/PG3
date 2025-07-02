@@ -1335,14 +1335,17 @@ def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,
     fig1 = plt.figure()
     grpn = np.unique(grpid,return_counts=True)[1]
     hbins = np.arange(0.5,40.5,1)
-    plt.hist(grpn, bins=hbins)
+    plt.hist(grpn, bins=hbins, weights=1/volume+np.zeros_like(grpn))
+    nn = np.linspace(0,45,50)
+    plt.plot(nn, (10**(3.9*np.exp(-0.13*nn)))/(191958.08 / (H0/100.)**3), color='k',label=r'ECO (H23), $z=0$, $M_r \leq -17.33$')
     plt.xlim(0.5,40.5)
     plt.yscale('log')
     plt.xlabel(r'Group $N_{\rm galaxies}$')
-    plt.ylabel(r'Number of Groups')
+    plt.ylabel(r'Comoving Number Density of Groups [Mpc$^{-3}$]')
     n_high_N = len(grpn[grpn>np.max(hbins)])
     if n_high_N>0:
         plt.annotate(xy=(0.5,0.6), xycoords='axes fraction', text=f'+{n_high_N} N>{np.max(hbins)+0.5} Groups')
+    plt.legend(loc='best')
     plt.tight_layout()
     plt.close()
 
@@ -1360,10 +1363,30 @@ def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,
 
     # lum func
     fig3=plt.figure()
-    plt.hist(absrmag, bins='fd')
+    eco_lf=(np.array([0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+       0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+       8.93424203e-06, 7.14739417e-06, 5.36054358e-06, 1.78684804e-05,
+       4.46712438e-05, 7.50476102e-05, 1.50095453e-04, 1.94767577e-04,
+       2.93044839e-04, 4.10977518e-04, 5.16402186e-04, 6.43242267e-04,
+       7.57578760e-04, 8.62996560e-04, 9.95215494e-04, 1.07561890e-03,
+       1.16495602e-03, 1.22229708e-03, 1.28857698e-03, 1.36542693e-03,
+       1.40295830e-03, 1.55487098e-03, 1.68348849e-03, 1.76841393e-03,
+       2.06136331e-03, 2.06850842e-03, 1.23431720e-03]), np.array([-26.,
+       -25.75, -25.5 , -25.25, -25.  , -24.75, -24.5 , -24.25,
+       -24.  , -23.75, -23.5 , -23.25, -23.  , -22.75, -22.5 , -22.25,
+       -22.  , -21.75, -21.5 , -21.25, -21.  , -20.75, -20.5 , -20.25,
+       -20.  , -19.75, -19.5 , -19.25, -19.  , -18.75, -18.5 , -18.25,
+       -18.  , -17.75, -17.5 , -17.25]))
+    eco_lf = (0.5*(eco_lf[1][:-1]+eco_lf[1][1:]), eco_lf[0])
+    lmax = int(np.max(absrmag))
+    bv = np.arange(-26, lmax, 0.25)
+    hist=plt.hist(absrmag, bins=bv, weights=1/volume+np.zeros_like(absrmag))
+    plt.plot(eco_lf[0], eco_lf[1], color='k', marker='D', label='ECO (z=0)')
     plt.xlabel(r'$M_r$')
-    plt.ylabel('Number of Galaxies')
+    plt.ylabel(r'Comoving Number Density [Mpc$^{-3}$]')
     plt.yscale('log')
+    plt.xlim(-26,lmax)
+    plt.legend(loc='best')
     plt.gca().invert_xaxis()
     plt.tight_layout()
     plt.close()
@@ -1447,7 +1470,7 @@ if __name__=='__main__':
     plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
     plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
     ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
-    plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3D Dwarf-Only Groups')
+    plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3 Dwarf-Only Groups')
     plt.yscale('log')
     plt.xlabel(r"Group $N_{\rm galaxies}$")
     plt.xlim(0,50)
