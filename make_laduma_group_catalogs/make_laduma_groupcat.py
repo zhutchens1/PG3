@@ -26,11 +26,13 @@ cosmo = LambdaCDM(pg3_params['H0'], pg3_params['Om0'], pg3_params['Ode0'])
 meta = pd.read_csv(metapath, sep='\t').set_index('File')
 ecolimit = -17.33
 
-for fname in os.listdir(subvoldir)[4:]:
+print(os.listdir(subvoldir))
+for fname in os.listdir(subvoldir):
     if ('meta' not in fname) and fname.endswith('.csv'):
         fnamepath = subvoldir + fname
         print(f'###### working on {fnamepath} #######')
         Mrlim = meta.loc[fname,'Mrlim']
+        print(ecolimit, Mrlim)
         floor = (Mrlim if (Mrlim<ecolimit) else ecolimit)
         volume = meta.loc[fname,'VolMpc3']
 
@@ -44,6 +46,7 @@ for fname in os.listdir(subvoldir)[4:]:
 
         # Record group properties
         df.loc[:,'pg3grp'] = pg3out[0]
+        df.loc[:,'pg3ssid'] = pg3out[1]
         df.loc[:,'pg3grpn'] = pg3obj.get_grpn(return_by_galaxy=True)
         grpra, grpdec, grpz, grpz16, grpz84, _  = pg3obj.get_group_centers(return_z_pdfs=False)
         df.loc[:,'pg3grpradeg'] = grpra

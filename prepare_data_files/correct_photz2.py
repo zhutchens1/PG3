@@ -26,15 +26,17 @@ if __name__=='__main__':
     iband_zp_depth = 24
     rband_zp_depth = np.median(xmms.mag_R_VOICE[(xmms.mag_I_VOICE>iband_zp_depth-0.1)&(xmms.mag_I_VOICE<iband_zp_depth+0.1)])
     xmms = xmms[(xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0) & (xmms.absmag_R_VOICE>-99) & (xmms.mag_I_VOICE<iband_zp_depth) & \
-                (xmms.redchi2_gal < 2)]
+                (xmms.redchi2_gal < 10)]
 
-    fitting_bins = np.arange(0,1.4,0.15)
+    fitting_bins = np.arange(0,1.4,0.3)
     xmms.loc[:,'zphotcorr_bin'] = np.digitize(xmms.zphot.to_numpy(), bins=fitting_bins)
 
     # ----------------------------------------------------------------- #
     # get corrected zphot data
     fit1params = []
+    fit1errors = []
     fit2params = []
+    fit2errors = []
     groups = xmms.groupby('zphotcorr_bin')
     for _, gg in groups:
         if (gg.zphotcorr_bin==0).all() or (gg.zphotcorr_bin==len(fitting_bins)).all():
@@ -47,21 +49,28 @@ if __name__=='__main__':
                     view_intermediate_plots=False, save_final_fig_path=figpath, log_file_path=logpath, force_linear_fit1=True, force_quad_fit2=True)
             _ = ct.run()
             fit1params.append(ct.model1p)
+            fit1errors.append(ct.model1e)
             fit2params.append(ct.model2p)# if len(ct.model2p)>2 else np.array([0]+list(ct.model2p)))
+            fit2errors.append(ct.model2e)
 
     zbin = 0.5*(fitting_bins[1:]+fitting_bins[:-1])
     fit1params = np.array(fit1params)
     fit2params = np.array(fit2params)
-    
+    fit1errors = np.array(fit1errors)
+    fit2errors = np.array(fit2errors)
+
+    print(fit2params)
+
+    pkw = dict(fmt='o', capsize=3)
     fig,axs=plt.subplot_mosaic("""
     ab.
     cde
     """)
-    axs['a'].plot(zbin, fit1params[:,0], 'bo-') 
-    axs['b'].plot(zbin, fit1params[:,1], 'bo-') 
-    axs['c'].plot(zbin, fit2params[:,0], 'bo-') 
-    axs['d'].plot(zbin, fit2params[:,1], 'bo-') 
-    axs['e'].plot(zbin, fit2params[:,2], 'bo-') 
+    axs['a'].errorbar(zbin, fit1params[:,0], yerr=fit1errors[:,0], **pkw) 
+    axs['b'].errorbar(zbin, fit1params[:,1], yerr=fit1errors[:,1], **pkw) 
+    axs['c'].errorbar(zbin, fit2params[:,0], yerr=fit2errors[:,0], **pkw) 
+    axs['d'].errorbar(zbin, fit2params[:,1], yerr=fit2errors[:,1], **pkw) 
+    axs['e'].errorbar(zbin, fit2params[:,2], yerr=fit2errors[:,2], **pkw) 
     plt.show()
 
     exit()

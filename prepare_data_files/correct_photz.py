@@ -7,15 +7,71 @@ from photzcorrection import corrector
 from survey_volume import solid_angle, integrate_volume
 from copy import deepcopy
 from astropy.cosmology import LambdaCDM
+from speclite import filters
+import astropy.units as u
+from scipy.integrate import trapezoid
+from scipy.interpolate import interp1d
+import h5py
+from pathos.multiprocessing import ProcessingPool
+from tqdm import tqdm
 cosmo = LambdaCDM(70,0.3,0.7)
 
 direc = dict(
-    redshift_catalog = './xmmservs_w_absrmag_specz.csv',
+    redshift_catalog = './z22_w_laduma_specz.csv',
     subvolpath = '/srv/one/zhutchen/paper3/data/subvolumes/',
+    sedfile = '/srv/one/zhutchen/paper3/data/zou/seds/wcdfs/models_gal_wcdfs.h5',
 )
-
-def absMag(z, m):
+def absMag_distmod(z, m):
     return m+5-5*np.log10(cosmo.luminosity_distance(z).to('pc').value)
+
+def get_abs_mag(tractorID, xmmservs_cat, xmmservs_seds, zbest_key):
+    try:
+        obsv_wavelength = np.array(xmmservs_seds[str(tractorID)]['wavelength'])*1000. # 1000 nm/micron
+    except KeyError:
+        #print(f"failed on {tractorID} - could not find SED.")
+        return -999
+    z_sed =xmmservs_cat.loc[tractorID,'redshift']
+    z_best=xmmservs_cat.loc[tractorID,zbest_key]
+    rest_wavelength = obsv_wavelength / (1+z_best)
+    correction = (cosmo.luminosity_distance(z_best)/cosmo.luminosity_distance(z_sed))**2.0
+    obsv_specific_lum = np.array(xmmservs_seds[str(tractorID)]['L_lambda_total'])*correction
+    rband = filters.load_filter('sdss2010-r')
+    rbandwavelength=np.array(rband.wavelength)*0.1 # 0.1 nm per AA
+    rbandresponse=np.array(rband.response)
+    rbandresponseinterp = interp1d(rbandwavelength,rbandresponse,bounds_error=False,fill_value=0)
+
+    #plt.figure()
+    #plt.plot(obsv_wavelength, obsv_specific_lum,'k',label='Observed-Frame Wavelength')
+    #plt.plot(rest_wavelength, obsv_specific_lum,'r',label='Rest-Frame wavelength')
+    ##plt.xscale('log')
+    #plt.axvline(np.min(rbandwavelength))
+    #plt.axvline(np.max(rbandwavelength))
+    #plt.yscale('log')
+    #plt.xlabel(r"$\lambda$ [nm]")
+    #plt.ylabel(r"Specific Luminosity $L_\lambda$ [W/nm]")
+    ##plt.ylim(1e33,0.2e35)
+    #plt.xlim(400,900)
+    #plt.legend(loc='best')
+    #plt.show()
+
+    Lsun = 3.846e26
+    W_per_ergss = 1e-7
+    cm_per_Mpc = 3.086e24
+    dist_cm = 1e-5 * cm_per_Mpc
+    nm_per_AA = 0.1 # nm/AA
+    rbandzeropoint_flambda = 278e-11 # ergs/s/cm2/AA
+    rbandzeropoint_Llambda = rbandzeropoint_flambda * 4 * np.pi * dist_cm * dist_cm # ergs/s/AA
+    rbandzeropoint_Llambda = rbandzeropoint_Llambda * W_per_ergss # W/AA
+    rbandzeropoint_Llambda = rbandzeropoint_Llambda / nm_per_AA
+    zeropointC = 2.5*np.log10(trapezoid(rbandzeropoint_Llambda*rbandresponseinterp(rest_wavelength),rest_wavelength))
+
+    integrand = (obsv_specific_lum)*rbandresponseinterp(rest_wavelength)
+    Lr = trapezoid(integrand,rest_wavelength)
+    MM = (-2.5*np.log10(Lr)+zeropointC)
+    #except KeyError:
+    #    MM = -999
+    #    print("KeyError Warning: failed on tractorID {} (SED not found and/or no phometry or redshift)".format(tractorID))
+    return MM
 
 if __name__=='__main__':
     # ----------------------------------------------------------------- #
@@ -25,8 +81,7 @@ if __name__=='__main__':
     rband_voice_depth = 26
     iband_zp_depth = 24
     rband_zp_depth = np.median(xmms.mag_R_VOICE[(xmms.mag_I_VOICE>iband_zp_depth-0.1)&(xmms.mag_I_VOICE<iband_zp_depth+0.1)])
-    xmms = xmms[(xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0) & (xmms.absmag_R_VOICE>-99) & (xmms.mag_I_VOICE<iband_zp_depth) & \
-                (xmms.redchi2_gal < 2)]
+    xmms = xmms[(xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0) & (xmms.mag_I_VOICE<iband_zp_depth)]
 
     fitting_bins = np.arange(0,1.4,0.4)
     xmms.loc[:,'zphotcorr_bin'] = np.digitize(xmms.zphot.to_numpy(), bins=fitting_bins)
@@ -69,23 +124,32 @@ if __name__=='__main__':
     xmms.loc[:,'bestoverallzerr'] = zbesterr
     xmms.loc[:,'bestoverallzflag'] = zbestflag #1=photz 2=specz
 
-    tmp=(xmms[(xmms.zphot>0.6) & (xmms.zphot<0.8) & (xmms.absmag_R_VOICE>-15) & (xmms.absmag_R_VOICE>-99) & (xmms.mag_R_VOICE<rband_zp_depth)])
-    tmp = tmp[['bestoverallz','zspecbest','zphot','zspec','mag_R_VOICE','absmag_R_VOICE','Tractor_ID','ngoodband','redchi2_gal']]
-    print(tmp)
+    ### Calculate abs magnitudes
+    seds = h5py.File(direc['sedfile'],'r')
+    xmms = xmms.set_index('Tractor_ID')
+    absrmag = np.zeros(len(xmms))
+    #for ii,Tid in (xmms.index.to_numpy()):
+    #    absrmag[ii] = get_abs_mag(Tid, xmms, seds, 'bestoverallz')
+    worker = lambda Tid: get_abs_mag(Tid, xmms, seds, 'bestoverallz')
+    ids_to_process = xmms.index.to_numpy()
+    with ProcessingPool(60) as pool:
+        absm = list(tqdm(pool.imap(worker,ids_to_process),total=len(ids_to_process)))
+    xmms.loc[:,'absmag_R_VOICE'] = absm
 
+    ### Reduce selection and unnecessary columns 
     selection = (xmms.bestoverallz>0) & (xmms.bestoverallz < np.max(fitting_bins)) & (xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0)
     magcols = [kk for kk in xmms.columns if (kk.startswith('mag') or kk.startswith('absmag'))]
     zcols = [kk for kk in xmms.columns if (kk.endswith('zspec_cat') or kk.startswith('z') or kk.startswith('bestov'))]
-    cols_to_keep = ['RA','DEC','Tractor_ID']+magcols+zcols
+    cols_to_keep = ['RA','DEC',"Mstar_gal","Mstar_gal_err"]+magcols+zcols
     xmms = xmms.loc[selection, cols_to_keep]
 
     plt.figure()
-    sc=plt.scatter(xmms.bestoverallz, xmms.absmag_R_VOICE, c=xmms.mag_R_VOICE, vmin=18, vmax=24.4, alpha=0.6, s=1)
+    sc=plt.scatter(xmms.bestoverallz, xmms.absmag_R_VOICE, c=xmms.zphot, vmin=0, vmax=3, alpha=0.6, s=1)
     z_arr = np.linspace(0,1.4,1000)
-    plt.plot(z_arr, absMag(z_arr, rband_voice_depth), label=r'VOICE Photometric Depth ($m_r = 26$)', color='k')
-    plt.plot(z_arr, absMag(z_arr, rband_zp_depth), label=r'VOICE $z_{\rm phot}$  Depth ($m_r = $' + f'{rband_zp_depth:0.1f}' + r')',\
+    plt.plot(z_arr, absMag_distmod(z_arr, rband_voice_depth), label=r'VOICE Photometric Depth ($m_r = 26$)', color='k')
+    plt.plot(z_arr, absMag_distmod(z_arr, rband_zp_depth), label=r'VOICE $z_{\rm phot}$  Depth ($m_r = $' + f'{rband_zp_depth:0.1f}' + r')',\
              linestyle='dashed', color='k')
-    plt.colorbar(sc, label=r'$m_r$')
+    plt.colorbar(sc, label='Uncorrected Photo-z')#label=r'$m_r$')
     plt.ylim(-5,-25)
     plt.xlim(0,np.max(fitting_bins))
     plt.xlabel('Best Overall $z$')
@@ -98,18 +162,19 @@ if __name__=='__main__':
     zwin=0.2
     subvolranges = np.array([np.arange(0,1,zwin), np.arange(0+zwin,1+zwin,zwin)]).T 
     subvolranges_offset = subvolranges+zwin/2
-    subvolranges = np.vstack([subvolranges, subvolranges_offset])
+    spws = np.array([[0,0.1], [0.2,0.5], [0.5,0.65]])
+    subvolranges = np.vstack([spws, subvolranges, subvolranges_offset])
     print(subvolranges)
 
     log = open(direc['subvolpath']+"subvolume_metadata.csv",'w+')
     log.write('File\tN\tzmin\tzmax\tSA_str\tVolMpc3\tMrlim\n')
     for (zmin, zmax) in subvolranges:
-        fname = "subvolume_{:0.1f}_to_{:0.1f}.csv".format(zmin,zmax)
+        fname = "subvolume_{:0.2f}_to_{:0.2f}.csv".format(zmin,zmax)
         subvolume = xmms[(xmms.bestoverallz>zmin) & (xmms.bestoverallz<=zmax) & ~pd.isna(xmms.mag_R_VOICE)]
         ngal = len(subvolume)
         SA = solid_angle(subvolume.RA, subvolume.DEC, bins=1000) / 3282.8 # converted from deg2 to steradians
         vol = integrate_volume(np.linspace(zmin,zmax,10000), SA, 70., 0.3, 0.7)
-        Mrlim = absMag(zmax, rband_zp_depth)
-        log.write(f"{fname}\t{int(ngal)}\t{zmin:0.1f}\t{zmax:0.1f}\t{SA:0.6E}\t{vol:0.6E}\t{Mrlim:0.2f}\n")
+        Mrlim = absMag_distmod(zmax, rband_zp_depth)
+        log.write(f"{fname}\t{int(ngal)}\t{zmin:0.2f}\t{zmax:0.2f}\t{SA:0.6E}\t{vol:0.6E}\t{Mrlim:0.2f}\n")
         subvolume.to_csv(direc["subvolpath"]+fname,index=False)
     log.close()

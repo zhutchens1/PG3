@@ -2,16 +2,18 @@ import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord, match_coordinates_sky
 import astropy.units as uu
+import matplotlib.pyplot as plt
+from scipy.spatial import ConvexHull
 
-output_file = './xmmservs_w_absrmag_specz.csv'
-photpath = '/srv/one/zhutchen/paper3/prepare_data_files/xmmservs_absrmag.hdf5'
+output_file = './z22_w_laduma_specz.csv'
+photpath = '/srv/one/zhutchen/paper3/prepare_data_files/xmmservs_joined.hdf5'
 zspecpath = '/srv/one/zhutchen/paper3/data/laduma/speczmerged-munira-zbestprior-zerr-columns-17June2025.csv'
 laduma_data_path = '/srv/one/zhutchen/paper3/data/laduma/'
 lowz_HIcat = laduma_data_path+'LADUMA_lowz_catalog_dr1.csv'
 lowz_optcoords = laduma_data_path+'LADUMA_dr1_lowz_optical_coords.csv'
 midz_HIcat = laduma_data_path+'LADUMA_midz_catalog_dr1.csv'
 highz_HIcat = laduma_data_path+'LADUMA_HighZSPW_SourceList_29April25.csv'
-threshold = 5 # arcsec
+threshold = 6 # arcsec
 threshold_HI = 10 # arcsec
 nominal_zspec_err = 0.005
 
@@ -24,10 +26,22 @@ if __name__=='__main__':
     # get closest match for each spec-z
     zspeccoords = SkyCoord(ra=speczcat.RA_zspec_cat.to_numpy()*uu.degree, dec=speczcat.DEC_zspec_cat.to_numpy()*uu.degree)
     xmmscoords = SkyCoord(ra=xmms.RA.to_numpy()*uu.degree, dec=xmms.DEC.to_numpy()*uu.degree)
-    
     idx, sep2d, _ = match_coordinates_sky(xmmscoords, zspeccoords)
     matches = speczcat.iloc[idx].set_index(keys=xmms.index)
     assert (matches.index.to_numpy()==xmms.index.to_numpy()).all()
+
+    plt.figure()
+    z22pts = np.array([xmmscoords.ra.to('deg').value, xmmscoords.dec.to('deg').value]).T
+    hull=ConvexHull(z22pts)
+    plt.plot(zspeccoords.ra.to('deg').value, zspeccoords.dec.to('deg').value, 'rx', alpha=0.5, label='zspec cat')
+    #plt.plot(z22pts[:,0], z22pts[:,1], 'ko', alpha=0.2, label='phot cat')
+    for simplex in hull.simplices:
+        plt.plot(z22pts[simplex,0], z22pts[simplex,1], 'k-')
+    plt.plot(matches.RA_zspec_cat, matches.DEC_zspec_cat, 'b.')
+    plt.xlabel('ra')
+    plt.ylabel('dec')
+    plt.legend(loc='best')
+    plt.show() 
 
     # filter out bad matches and duplicate matches
     matches.loc[:,'sep'] = sep2d.to('arcsec').value
