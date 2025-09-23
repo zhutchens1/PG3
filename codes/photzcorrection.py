@@ -24,6 +24,7 @@ class corrector(object):
                  log_file_path: str = None,
                  force_linear_fit1: bool = False,
                  force_quad_fit2: bool = False,
+                 force_linear_fit2: bool = False,
                 ) -> None:
         """
         `corrector` - class object for correcting photometric z
@@ -70,9 +71,9 @@ class corrector(object):
         self.zspec = self.df[zspec_key].to_numpy()
         self.zphot = self.df[zphot_key].to_numpy()
         self.zphoterr = self.df[zphot_err_key].to_numpy()
+        self.imag_cut = imag_cut
         if imag_key is not None:
             self.imag = self.df[imag_key].to_numpy()
-            self.imag_cut = imag_cut
         if goodzflag_key is not None:
             self.goodz = self.df[goodzflag_key].to_numpy(dtype=int)
         else:
@@ -86,6 +87,7 @@ class corrector(object):
             self.logFile = None
         self.force_linear_fit1 = force_linear_fit1
         self.force_quad_fit2 = force_quad_fit2
+        self.force_linear_fit2 = force_linear_fit2
         
     def run(self) -> (np.array, np.array, np.array):
         self.zphotcorr = deepcopy(self.zphot)
@@ -148,7 +150,7 @@ class corrector(object):
         magbinc, nmad_dzcorr_over_etab, bedg, _ = bstat(mag, dzcorr_over_etab, nmad, bins=self.magbins)
         _,nmad_dzcorr_over_etab_err,_,_ = bstat(mag, dzcorr_over_etab, nmad_bootstrap, bins=self.magbins)
         model2,model2p,model2e = self.fit_dz_over_etab(magbinc,nmad_dzcorr_over_etab,nmad_dzcorr_over_etab_err,\
-            self.bic_diff_thresh, self.force_quad_fit2)
+            self.bic_diff_thresh, self.force_quad_fit2, self.force_linear_fit2)
         etabcorr = etab * model2(mag)
 
         self.corrected_flag = np.ones_like(self.zphot)
@@ -209,7 +211,7 @@ class corrector(object):
                 return linearmodel, linearparams, linearparamerr
 
     @staticmethod
-    def fit_dz_over_etab(magbinc, nmad_ratio, nmad_ratioerr,bic_diff_thresh,force_quad_fit2):
+    def fit_dz_over_etab(magbinc, nmad_ratio, nmad_ratioerr,bic_diff_thresh,force_quad_fit2,force_linear_fit2):
         linearmodel, linearparams, linearparamerr = fit_poly(magbinc, nmad_ratio, 1, nmad_ratioerr)
         quadmodel, quadparams, quadparamerr = fit_poly(magbinc, nmad_ratio, 2, nmad_ratioerr)
         pwisemodel, pwiseparams, pwiseparamerr = fit_piecewise_linear(magbinc, nmad_ratio, nmad_ratioerr)
@@ -222,13 +224,17 @@ class corrector(object):
         bic_linear = compute_bic(chi2_linear, len(linearparams), n_sample)
         bic_quad = compute_bic(chi2_quad, len(quadparams), n_sample)
         bic_pwise = compute_bic(chi2_pwise, len(pwiseparams), n_sample)
-        if force_quad_fit2:
+        if force_quad_fit2 and (not force_linear_fit2):
             quadratic = lambda x,a,b,c: (a*x*x + b*x + c)
             quadparams, pcov = curve_fit(quadratic, magbinc, nmad_ratio,\
                 sigma=nmad_ratioerr, absolute_sigma=True)
             quadparamerr = np.sqrt(np.diagonal(pcov))
             quadmodel = lambda x: quadratic(x,*quadparams) 
             return quadmodel, quadparams, quadparamerr
+        elif force_linear_fit2 and (not force_quad_fit2):
+            return linearmodel, linearparams, linearparamerr
+        elif force_linear_fit2 and force_quad_fit2:
+            raise ValueError("force_lienar_fit2 and force_quad_fit2 cannot be both be True")   
         else:
             if (bic_linear-bic_quad)>=bic_diff_thresh and (bic_linear-bic_pwise)<bic_diff_thresh:
                 return quadmodel, quadparams, quadparamerr
