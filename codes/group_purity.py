@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import mode
 
-def get_metrics_by_group(groupid, haloid, galproperty):
+def get_metrics_by_group(groupid, haloid, galproperty, enforce_positive_IDs=False):
     """
     For a group catalog constructed from a mock galaxy catalog,
     compute galaxy-wise purity and completeness metrics using
@@ -59,7 +59,12 @@ def get_metrics_by_group(groupid, haloid, galproperty):
         groupsel = np.where(groupid==gg)
         N_g = len(groupsel[0])
         sortidx = np.argsort(sortfactor*galproperty[groupsel])
-        hh = mode(haloid[groupsel][sortidx], keepdims=True)[0][0]
+        if enforce_positive_IDs:
+            take_mode_of = haloid[groupsel][sortidx]
+            take_mode_of = take_mode_of[take_mode_of>0]
+        else:
+            take_mode_of = haloid[groupsel][sortidx]
+        hh = mode(take_mode_of, keepdims=True)[0][0]
         halosel = np.where(haloid==hh)
         N_h = len(halosel[0])
         N_s = np.sum(haloid[groupsel]==hh)
@@ -129,8 +134,12 @@ def get_metrics_by_halo(groupid, haloid, galproperty):
         groupsel = np.where(groupid==gg)
         N_g = len(groupsel[0])
         N_s = np.sum(haloid[groupsel]==hh)
-        purity[halosel]=N_s/N_g
-        completeness[halosel]=N_s/N_h
+        if (hh<0):
+            purity[halosel] = -99.
+            completeness[halosel] = -99.
+        else:
+            purity[halosel]=N_s/N_g
+            completeness[halosel]=N_s/N_h
     return purity, completeness
 
 if __name__=='__main__':
