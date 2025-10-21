@@ -20,23 +20,24 @@ def run(eco, Pth, blos=1.1, savepath='./'):
           'pfof_Pth' : Pth, 'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,\
           'iterative_giant_only_groups': True, 'ncores' : None,\
           })
-    for kk in ['radeg','dedeg','simz','simzerr','absrmag','bestz','bestzerr','zphotcorr','zphoterrcorr']:
-        print(kk, pd.isna(eco[kk]).any(), np.min(eco[kk]), np.max(eco[kk]))
-    exit()
+    #for kk in ['radeg','dedeg','simz','simzerr','absrmag','bestz','bestzerr','zphotcorr','zphoterrcorr']:
+    #    print(kk, pd.isna(eco[kk]).any(), np.min(eco[kk]), np.max(eco[kk]))
     pg3ob=pg3.pg3(eco.radeg, eco.dedeg, 3e5*eco.simz, 3e5*eco.simzerr, eco.absrmag, -19.5,fof_bperp=0.07,fof_blos=blos,**gfargseco)
     pg3grp=pg3ob.find_groups()[0]
     eco.loc[:,'pg3grp'] = pg3grp
 
     g3grp = eco.loc[:,'g3grp_l'].to_numpy()
-    pc_dataframe = eco.groupby('pg3grp_l').filter(lambda grp: (grp.g3grp_l>0).any())
-    pp,cc = get_metrics_by_group(pg3grp, g3grp, pc_dataframe.absrmag.to_numpy())
+    pc_dataframe = eco.groupby('pg3grp').filter(lambda grp: (grp.g3grp_l>0).any())
+    pp,cc = get_metrics_by_group(pc_dataframe.pg3grp, pc_dataframe.g3grp_l, pc_dataframe.absrmag.to_numpy(), enforce_positive_IDs=True)
     pc_dataframe.loc[:,'P_TR'] = pp
     pc_dataframe.loc[:,'C_TR'] = cc
-    pp, cc = get_metrics_by_halo(pg3grp, g3grp, pc_dataframe.absrmag.to_numpy())
+    pp, cc = get_metrics_by_halo(pc_dataframe.pg3grp, pc_dataframe.g3grp_l, pc_dataframe.absrmag.to_numpy())
     pc_dataframe.loc[:,'P_RT'] = pp
     pc_dataframe.loc[:,'C_RT'] = cc
-    pc_dataframe.loc[:,'grpn_TR'] = pg3.multiplicity_function(pg3grp,return_by_galaxy=True)
+    pc_dataframe.loc[:,'grpn_TR'] = pg3.multiplicity_function(pc_dataframe.pg3grp.to_numpy(),return_by_galaxy=True)
     pc_dataframe.to_csv(savepath+f"eco_Pth{Pth}.csv")
+
+# ========================================================== #
 
 if __name__ == '__main__':
     folder_name = 'realistic_lsdr9/'
@@ -64,7 +65,13 @@ if __name__ == '__main__':
     names_to_replace = np.random.choice(names_to_choose_from, replace=False, size=int(0.85*13861))
     eco.loc[names_to_replace,'simz'] = eco.loc[names_to_replace,'zphotcorr']
     eco.loc[names_to_replace,'simzerr'] = eco.loc[names_to_replace,'zphoterrcorr']
+    eco.loc[eco[eco.simzerr<10/3e5].index,'simzerr'] = 10/3e5 # replace low spec-z errors with 10 km/s
 
-    Pth = [1e-2, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999]
+    # test
+    #eco.loc[:,'simzerr'] = 20/3e5
+
+    Pth = [1e-4, 5e-3, 1e-3, 5e-2, 1e-2, 5e-2, 0.1, 0.15, 0.2, 0.25,  0.3, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8]
+    #, 0.9, 0.95, 0.99, 0.999]
+
     for pth_ in Pth:
         run(eco, pth_, savepath=savepath)
