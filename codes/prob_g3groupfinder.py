@@ -21,8 +21,8 @@ from copy import deepcopy
 from datetime import datetime
 from joblib import Parallel, delayed
 import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("once",IntegrationWarning)
+#with warnings.catch_warnings():
+#    warnings.simplefilter("once",IntegrationWarning)
 from matplotlib.ticker import MaxNLocator, AutoLocator
 from matplotlib import rcParams
 rcParams['axes.labelsize'] = 9
@@ -36,7 +36,6 @@ my_locator = MaxNLocator(6)
 singlecolsize = (3.3522420091324205, 2.0717995001590714)
 doublecolsize = (7.500005949910059, 4.3880449973709)
 SPEED_OF_LIGHT = 2.998e5
-nquadopts = {'limit':500, 'epsrel':1e-6}
 
 class pg3(object):
     def __init__(self,radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,fof_bperp=0.07,fof_blos=1.1,fof_sep=None, volume=None,pfof_Pth=0.01, center_mode='average',\
@@ -1229,12 +1228,22 @@ def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     P12: float
         Integration result P_12 for D1 and D2 given g_or_e.
     """
-    D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
-    f_of_z = np.zeros(len(z1))
-    for i in range(len(z1)):
-        zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
-        f_of_z[i] = np.trapz(D2(zprime),zprime)
-    P12 = np.trapz(s1pdf*f_of_z, z1)
+    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
+    ##D2 = interp1d(z2, s2pdf, fill_value=0)
+    #f_of_z = np.zeros(len(z1))
+    #for i in range(len(z1)):
+    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
+    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
+    #P12 = np.trapz(s1pdf*f_of_z, z1)
+    #return P12
+    cum_D2 = np.zeros(len(z2))
+    cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
+    lower = np.searchsorted(z2, z1 - g_or_e, side='left')
+    upper = np.searchsorted(z2, z1 + g_or_e, side='right')
+    lower = np.clip(lower, 0, len(z2)-1)
+    upper = np.clip(upper, 0, len(z2)-1)
+    f_of_z = cum_D2[upper] - cum_D2[lower]
+    P12 = np.trapz(s1pdf * f_of_z, z1)
     return P12
 
 def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel, wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, rproj_mult, vproj_mult, vproj_offs, saveplotspdf):
