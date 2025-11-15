@@ -1,5 +1,5 @@
-import matplotlib
 import math
+import matplotlib
 matplotlib.use('Agg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import astropy.units as uu
 from astropy.cosmology import LambdaCDM, z_at_value
-from scipy.integrate import quad, simpson, dblquad, IntegrationWarning 
+from scipy.integrate import quad, simpson, IntegrationWarning
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 #from scipy.sparse import csr_array
@@ -23,7 +23,6 @@ from joblib import Parallel, delayed
 import warnings
 with warnings.catch_warnings():
     warnings.simplefilter("once",IntegrationWarning)
-
 from matplotlib.ticker import MaxNLocator, AutoLocator
 from matplotlib import rcParams
 rcParams['axes.labelsize'] = 9
@@ -37,6 +36,7 @@ my_locator = MaxNLocator(6)
 singlecolsize = (3.3522420091324205, 2.0717995001590714)
 doublecolsize = (7.500005949910059, 4.3880449973709)
 SPEED_OF_LIGHT = 2.998e5
+nquadopts = {'limit':500, 'epsrel':1e-6}
 
 class pg3(object):
     def __init__(self,radeg,dedeg,cz,czerr,absrmag,dwarfgiantdivide,fof_bperp=0.07,fof_blos=1.1,fof_sep=None, volume=None,pfof_Pth=0.01, center_mode='average',\
@@ -273,14 +273,14 @@ class pg3(object):
                 resamples = [df_.sample(frac=1, replace=True) for ii in range(0,self.n_bootstraps)]
                 wavg_relprojdist_err[ii] = np.std([weighted_median(resamp.rpdist, 1/resamp.czerr) for resamp in resamples])
                 wavg_relvel_err[ii] = np.std([weighted_median(resamp.dv, 1/resamp.czerr) for resamp in resamples])
-            self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=self.rproj_fit_guess, maxfev=5000,sigma=wavg_relprojdist_err, bounds = self.giantcalbounds)
+            self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=self.rproj_fit_guess, maxfev=5000,sigma=wavg_relprojdist_err, bounds = self.giantcalbounds, absolute_sigma=True)
             self.rproj_bestfit_err = np.sqrt(np.diag(rproj_bestfit_cov))
         else:
             self.rproj_bestfit = np.array(self.rproj_fit_params)
             self.rproj_bestfit_err = np.zeros(2)*1.
         if self.vproj_fit_params is None:
             try:
-                self.vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel,  p0=self.vproj_fit_guess, maxfev=5000,sigma=wavg_relvel_err, bounds = self.giantcalbounds)
+                self.vproj_bestfit, vproj_bestfit_cov  = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relvel,  p0=self.vproj_fit_guess, maxfev=5000,sigma=0.1*wavg_relvel_err, bounds = self.giantcalbounds, absolute_sigma=True)
                 self.vproj_bestfit_err = np.sqrt(np.diag(vproj_bestfit_cov))
             except RuntimeError:
                 print("Code failed at `get_giantFoF_calibrations` -- likely no Ngiants>1 groups.")
@@ -293,7 +293,7 @@ class pg3(object):
         self.vproj_boundary = lambda Ngiants:self.vproj_fit_multiplier*giantmodel(Ngiants, *self.vproj_bestfit) + self.vproj_fit_offset
         if self.make_summary_page or self.saveplotspdf:
             self.fig1 = plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, self.rproj_bestfit, relvel,\
-                wavg_relvel, wavg_relvel_err, self.vproj_bestfit, keepcalsel, self.saveplotspdf)
+                wavg_relvel, wavg_relvel_err, self.vproj_bestfit, keepcalsel, self.rproj_fit_multiplier, self.vproj_fit_multiplier, self.vproj_fit_offset, self.saveplotspdf)
         return None
 
     def giantonlymerging(self):
@@ -343,7 +343,6 @@ class pg3(object):
             gdsel = np.logical_not(np.logical_or(self.g3grpid==-99., ((gdgrpn==1) & (self.absrmag>self.dwarfgiantdivide))))
             gdgrpra, gdgrpdec, gdgrpz, _, _, _ = prob_group_skycoords(self.radeg[gdsel],self.dedeg[gdsel],self.cz[gdsel]/SPEED_OF_LIGHT,self.czerr[gdsel]/SPEED_OF_LIGHT,\
                  self.g3grpid[gdsel])
-
             gdrelvel = SPEED_OF_LIGHT*np.abs(self.cz[gdsel]/SPEED_OF_LIGHT - gdgrpz)/(1+gdgrpz)
             ctd1 = self.cosmo.comoving_transverse_distance(gdgrpz).value
             ctd2 = self.cosmo.comoving_transverse_distance(self.cz[gdsel]/SPEED_OF_LIGHT).value
@@ -372,8 +371,9 @@ class pg3(object):
         self.vproj_for_iteration = lambda M: self.gd_vproj_fit_multiplier*decayexp(M, *self.gd_vproj_bestfit) + self.gd_vproj_fit_offset
         if self.make_summary_page or self.saveplotspdf: 
             self.fig2=plot_rproj_vproj_2(self.g3grpid, self.absrmag, gdsel, gdtotalmag, gdrelprojdist, gdrelvel, self.magbincenters, binsel, gdmedianrproj,\
-                 gdmedianrelvel, self.gd_rproj_bestfit, self.gd_vproj_bestfit, self.saveplotspdf)
+                 gdmedianrelvel, self.gd_rproj_bestfit, self.gd_vproj_bestfit, self.gd_rproj_fit_multiplier, self.gd_vproj_fit_multiplier, self.gd_vproj_fit_offset, self.saveplotspdf)
         return None
+        
 
     def dwarfonlyIC(self):
         """
@@ -626,7 +626,7 @@ def get_median_eCDF(xx,aa,percentiles=[0.5]):
         return values[0]
     else:
         return values
-    
+
 def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, return_z_pdfs=False):
     """
     -----
@@ -663,16 +663,16 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     ngalaxies = len(galaxyra)
     galaxyphi = galaxyra * np.pi/180.
     galaxytheta = np.pi/2. - galaxydec*np.pi/180.
-    galaxyxx = np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1) # equivalent to [:,np.newaxis]
-    galaxyyy = np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1)
-    galaxyzz = np.expand_dims(((np.cos(galaxytheta))),axis=1)
+    galaxyxx = np.float32(np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1)) # equivalent to [:,np.newaxis]
+    galaxyyy = np.float32(np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1))
+    galaxyzz = np.float32(np.expand_dims(((np.cos(galaxytheta))),axis=1))
     # Prepare output arrays
-    uniqidnumbers = np.unique(galaxygrpid)
-    groupra = np.zeros(ngalaxies)
-    groupdec = np.zeros(ngalaxies)
-    groupz = np.zeros(ngalaxies)
-    groupz16 = np.zeros(ngalaxies)
-    groupz84 = np.zeros(ngalaxies)
+    uniqidnumbers = np.int32(np.unique(galaxygrpid))
+    groupra = np.zeros(ngalaxies, dtype=np.float32)
+    groupdec = np.zeros(ngalaxies, dtype=np.float32)
+    groupz = np.zeros(ngalaxies, dtype=np.float32)
+    groupz16 = np.zeros(ngalaxies, dtype=np.float32)
+    groupz84 = np.zeros(ngalaxies, dtype=np.float32)
     cspeed=SPEED_OF_LIGHT
     galaxyz = np.expand_dims(galaxyz,axis=1)
     galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
@@ -685,12 +685,12 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
             groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
         else:
-            mesh_spacing = np.min(galaxyzerr[sel])/1000.
+            mesh_spacing = np.min(galaxyzerr[sel])/300.
             gx,gy,gz = galaxyz[sel]*galaxyxx[sel], galaxyz[sel]*galaxyyy[sel], galaxyz[sel]*galaxyzz[sel]
             gxerr,gyerr,gzerr = galaxyzerr[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyzz[sel]
-            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), mesh_spacing)
-            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), mesh_spacing) 
-            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), mesh_spacing)
+            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), mesh_spacing, dtype=np.float32)
+            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), mesh_spacing, dtype=np.float32) 
+            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), mesh_spacing, dtype=np.float32)
             x16,xcen,x84 = get_median_eCDF(xmesh, np.sum(gauss_vectorized(xmesh, gx, gxerr),axis=0), percentiles=[0.16,0.5,0.84])
             y16,ycen,y84 = get_median_eCDF(ymesh, np.sum(gauss_vectorized(ymesh, gy, gyerr),axis=0), percentiles=[0.16,0.5,0.84])
             z16,zcen,z84 = get_median_eCDF(zmesh, np.sum(gauss_vectorized(zmesh, gz, gzerr),axis=0),  percentiles=[0.16,0.5,0.84])
@@ -715,17 +715,16 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
     if return_z_pdfs:
-        #zmesh = np.arange(0,np.max(galaxyz)+8*np.max(galaxyzerr), 1/cspeed) # 1 km/s resolution
         try:
-            zmesh = np.arange(0, np.max(galaxyz)+0.1, 1/cspeed) 
+            zmesh = np.arange(0, np.max(galaxyz)+0.1, 1/cspeed, dtype=np.float32)
         except MemoryError:
             print("MemoryWarning: zmesh is too fine at line 523 in prob_g3groupfinder; trying at 20 km/s resolution")
-            zmesh = np.arange(0, np.max(galaxyz)+0.1, 20/cspeed)
-        z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)))
+            zmesh = np.arange(0, np.max(galaxyz)+0.1, 20/cspeed, dtype=np.float32)
+        z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
-            z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]),axis=0)
-            z_pdfs[i]=z_pdfs[i]/simpson(z_pdfs[i],zmesh)
+            z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)
+            z_pdfs[i]=np.float32(z_pdfs[i]/simpson(z_pdfs[i],zmesh))
         pdfoutput = {'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers}
     else:
         pdfoutput=None
@@ -891,12 +890,7 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
 
     if fitingroup1 and fitingroup2:
         eps_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(totalgrpN)
-        D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0) 
-        D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
-        integrand = lambda zprime, z: D1(z)*D2(zprime)
-        zmin = np.min([np.min(seed1pdf['zmesh']), np.min(seed2pdf['zmesh'])])
-        zmax = np.max([np.max(seed1pdf['zmesh']), np.max(seed2pdf['zmesh'])])
-        pcombine, pcombine_err = dblquad(integrand, zmin, zmax, lambda z: z-eps_z, lambda z: z+eps_z, epsrel=0.0001)
+        pcombine = dbint_D1_D2(seed1pdf['zmesh'],seed1pdf['pdf'][0],seed2pdf['zmesh'],seed2pdf['pdf'][0],eps_z)
         fitingroup = (pcombine > pthresh)
     else:
         fitingroup = False
@@ -1168,8 +1162,6 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
         Seed group ID number for each galaxy.
     galmag : iterable
         M_r absolute magnitudes of all input galaxies, or galaxy stellar masses - the function can distinguish the two.
-    zpdfdict : dict
-        Dictionary containing group z pdfs (output of prob_group_skycoords)
     rprojboundary, vprojboundary : callable
         Limiting projected- and velocity-space group sizes as function of group-integrated luminosity or stellar mass.
     pthresh: float
@@ -1191,6 +1183,9 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     seed1grpra,seed1grpdec,seed1grpz,_,_,seed1pdf = prob_group_skycoords(galra[seed1sel],galdec[seed1sel],galz[seed1sel],galzerr[seed1sel],galgrpid[seed1sel], True)
     seed2grpra,seed2grpdec,seed2grpz,_,_,seed2pdf = prob_group_skycoords(galra[seed2sel],galdec[seed2sel],galz[seed2sel],galzerr[seed2sel],galgrpid[seed2sel], True)
     allgrpra,allgrpdec,allgrpz,_,_,_ = prob_group_skycoords(galra, galdec, galz, galzerr, np.zeros(len(galra)), False)
+
+    debug_condition = ((allgrpra[0]>185.14) and (allgrpra[0]<185.17) and (allgrpdec[0]>20.65) and (allgrpdec[0]<20.68))
+
     # Compute radial separations
     angsep1 = angular_separation(allgrpra[0], allgrpdec[0], seed1grpra[0], seed1grpdec[0])
     angsep2 = angular_separation(allgrpra[0], allgrpdec[0], seed2grpra[0], seed2grpdec[0])
@@ -1204,31 +1199,58 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     fitingroup2 = seed2radialsep < Rp 
     if fitingroup1 and fitingroup2:
         gamma_z = (1+seed1grpz[0])/SPEED_OF_LIGHT * vprojboundary(memberintmag)[0]
-        D1 = lambda x0: np.interp(x0, seed1pdf['zmesh'], seed1pdf['pdf'][0], 0, 0)
-        D2 = lambda x0: np.interp(x0, seed2pdf['zmesh'], seed2pdf['pdf'][0], 0, 0) 
-        integrand = lambda zprime, z: D1(z)*D2(zprime)
-        zmin = np.min([np.min(seed1pdf['zmesh']), np.min(seed2pdf['zmesh'])])
-        zmax = np.max([np.max(seed1pdf['zmesh']), np.max(seed2pdf['zmesh'])])
-        pcombine, pcombine_err = dblquad(integrand, zmin, zmax, lambda z: z-gamma_z, lambda z: z+gamma_z, epsrel=0.0001)
+        pcombine = dbint_D1_D2(seed1pdf['zmesh'],seed1pdf['pdf'][0],seed2pdf['zmesh'],seed2pdf['pdf'][0],gamma_z)
         fitingroup = (pcombine > pthresh)
     else:
         fitingroup = False
     return fitingroup
 
-def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel, wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, saveplotspdf):
+def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
+    """
+    Numerically calculate double integrals of D1(z)*D2(zprime) for
+    iterative combination calculations. D1 and D2 are redshift PDFs. 
+
+    Parameters
+    ----------------
+    z1 : array
+        Redshift (z) mesh corresponding to D1.
+    s1pdf : array
+        PDF values for D1.
+    z2 : array
+        Redshift (z) mesh corresponding to D2.
+    s2pdf : array
+        PDF values for D2.
+    g_or_e: float
+        Redshift range to search around, called gamma or epsilon
+        in this code.
+
+    Returns
+    -----------------
+    P12: float
+        Integration result P_12 for D1 and D2 given g_or_e.
+    """
+    D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
+    f_of_z = np.zeros(len(z1))
+    for i in range(len(z1)):
+        zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
+        f_of_z[i] = np.trapz(D2(zprime),zprime)
+    P12 = np.trapz(s1pdf*f_of_z, z1)
+    return P12
+
+def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel, wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, rproj_mult, vproj_mult, vproj_offs, saveplotspdf):
     fig,axs=plt.subplots(figsize=doublecolsize, ncols=2)
     tx = np.linspace(1,30,500)
     sel = np.where(giantgrpn>1)
     axs[0].plot(giantgrpn[sel], relprojdist[sel], 'r.', markersize=2, alpha=0.5, label='ECO Giant Galaxies',zorder=0, rasterized=False)
     axs[0].errorbar(uniqgiantgrpn[keepcalsel], wavg_relprojdist, wavg_relprojdist_err, fmt='^', color='k', label=r'$R_{\rm proj}$',zorder=0)
     axs[0].plot(tx, giantmodel(tx,*rproj_bestfit), color='blue', label=r'$1R_{\rm proj}^{\rm fit}$',zorder=2)
-    axs[0].plot(tx, 3*giantmodel(tx,*rproj_bestfit), color='green', label=r'$3R_{\rm proj}^{\rm fit}$', linestyle='dashed',zorder=3)
+    axs[0].plot(tx, rproj_mult*giantmodel(tx,*rproj_bestfit), color='green', label=str(rproj_mult)+r'$R_{\rm proj}^{\rm fit}$', linestyle='dashed',zorder=3)
     axs[0].plot(tx, giantmodel(tx,*(3.06e-1,4.16e-1)), color='gray', label=r'$1R_{\rm proj}^{\rm fit}$ from H23',zorder=2)
     
     axs[1].plot(giantgrpn[sel], relvel[sel], 'r.', markersize=2, alpha=0.5, label='ECO Giant Galaxies',zorder=0, rasterized=False)
     axs[1].errorbar(uniqgiantgrpn[keepcalsel], wavg_relvel, wavg_relvel_err, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$',zorder=0)
     axs[1].plot(tx, giantmodel(tx,*vproj_bestfit), color='blue', label=r'$1\Delta v_{\rm proj}^{\rm fit}$',zorder=2)
-    axs[1].plot(tx, 4*giantmodel(tx,*vproj_bestfit)+200, color='green', label=r'$4\Delta v_{\rm proj}^{\rm fit} + 200$ km s$^{-1}$',zorder=3, linestyle='dashed')
+    axs[1].plot(tx, vproj_mult*giantmodel(tx,*vproj_bestfit)+vproj_offs, color='green', label=str(vproj_mult)+r'$\Delta v_{\rm proj}^{\rm fit} +$' + str(vproj_offs) + r' km s$^{-1}$',zorder=3, linestyle='dashed')
     axs[1].plot(tx, giantmodel(tx,*(3.45e2,0.17)), color='gray', label=r'$1\Delta v_{\rm proj}^{\rm fit}$ from H23',zorder=3)
     
     for ii in range(0,2):
@@ -1240,26 +1262,27 @@ def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, 
     axs[0].set_ylabel("Projected Distance from Giant to Group Center [Mpc]")
     axs[1].set_ylabel(r"Relative Velocity from Giant to Group Center [km s$^{-1}$]")
     axs[0].set_ylim(0,1.0)
-    axs[1].set_ylim(0,1000)
+    axs[1].set_ylim(0,2000)
     plt.tight_layout()
     if saveplotspdf: plt.savefig("../figures/rproj_vproj_cal.pdf",dpi=300)
     return fig
 
 def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelprojdist, ecogdrelvel, magbincenters, binsel, gdmedianrproj, gdmedianrelvel, poptr, poptv,\
-    saveplotspdf):
+    gdrprojfit_mult, gdvprojfit_mult, gdvprojfit_offs, saveplotspdf):
     tx = np.linspace(-27,-17,100)
     fig, (ax,ax1) = plt.subplots(ncols=2, figsize=doublecolsize)
     giantgrpn = np.array([np.sum((ecoabsrmag[ecogdsel][ecog3grp[ecogdsel]==gg]<-19.5)) for gg in ecog3grp[ecogdsel]])
     sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
-    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=False)
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
-    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=False)
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn>2,ecogdtotalmag>-24))
-    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=False)
+    ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=True)
     #ax.errorbar(magbincenters, gdmedianrproj, yerr=gdmedianrproj_err, fmt='k^', label=r'Medians ($R_{\rm proj}^{\rm gi,\,dw}$)', rasterized=False, zorder=15)
-    ax.errorbar(magbincenters, gdmedianrproj, yerr=None, fmt='k^', label=r'Medians ($R_{\rm proj}^{\rm gi,\,dw}$)', rasterized=False, zorder=15)
-    ax.plot(tx, 1*decayexp(tx,*poptr), color='red', label=r'$R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=False)
-    ax.plot(tx, 2*decayexp(tx,*poptr), color='blue', label=r'$2R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=False,linestyle='--')
+    ax.errorbar(magbincenters, gdmedianrproj, yerr=None, fmt='k^', label=r'Medians ($R_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
+    ax.plot(tx, decayexp(tx, *(3.42e-2,5.1e-1)), color='k',label=r'$1R_{\rm proj,\, fit}^{\rm gi,\, dw}$ from H23')
+    ax.plot(tx, 1*decayexp(tx,*poptr), color='red', label=r'$1R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=True)
+    ax.plot(tx, gdrprojfit_mult*decayexp(tx,*poptr), color='blue', label=str(gdrprojfit_mult)+r'$R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=True,linestyle='--')
     #ax.plot(tx, 3*decayexp(tx,*poptr), label=r'$3R_{\rm proj,\,fit}^{\rm gi,\, dw}$', rasterized=False)
     ax.set_xlabel(r"Integrated $M_r$ of Giant + Dwarf Members")
     ax.set_ylabel(r"Projected Distance from Galaxy to Group Center [Mpc]")
@@ -1273,22 +1296,23 @@ def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelpr
 
     #ax1.plot(ecogdtotalmag[binsel], ecogdrelvel[binsel], '.', alpha=0.6, label='ECO Giant-Hosting Group Galaxies', rasterized=False, color='palegreen')
     #ax1.errorbar(magbincenters, gdmedianrelvel, yerr=gdmedianrelvel_err, fmt='k^',label=r'Medians ($\Delta v_{\rm proj}^{\rm gi,\,dw}$)', rasterized=False, zorder=15)
-    ax1.errorbar(magbincenters, gdmedianrelvel, yerr=None, fmt='k^',label=r'Medians ($\Delta v_{\rm proj}^{\rm gi,\,dw}$)', rasterized=False, zorder=15)
+    ax1.errorbar(magbincenters, gdmedianrelvel, yerr=None, fmt='k^',label=r'Medians ($\Delta v_{\rm proj}^{\rm gi,\,dw}$)', rasterized=True, zorder=15)
     sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
-    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=False)
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
-    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=False)
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn>2,ecogdtotalmag>-24))
-    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=False)
-    ax1.plot(tx, decayexp(tx, *poptv), color='red', label=r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$', rasterized=False)
-    ax1.plot(tx, 4*decayexp(tx, *poptv)+100, color='blue', label=r'$4\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$+100 km s$^{-1}$', rasterized=False, linestyle='--')
+    ax1.plot(ecogdtotalmag[sel_], ecogdrelvel[sel_], '.', color='slategrey', alpha=0.6, label=r'ECO $N_{\rm giants}\geq3$ Group Galaxies', rasterized=True)
+    ax1.plot(tx, decayexp(tx, *(1.97e1,4.16e-1)), color='k',label=r'1$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$ from H23')
+    ax1.plot(tx, decayexp(tx, *poptv), color='red', label=r'$1\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$', rasterized=True)
+    ax1.plot(tx, gdvprojfit_mult*decayexp(tx, *poptv)+gdvprojfit_offs, color='blue', label=str(gdvprojfit_mult)+r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$+' + str(gdvprojfit_offs) + r' km s$^{-1}$', rasterized=True, linestyle='--')
     ax1.set_ylabel(r"Relative Velocity from Galaxy to Group Center [km s$^{-1}]$")
     ax1.set_xlabel(r"Integrated $M_r$ of Giant + Dwarf Members")
     ax1.set_xlim(-24.1,-17)
-    ax1.set_ylim(0,800)
+    ax1.set_ylim(0,2000)
     ax1.invert_xaxis()
     ax1.set_xticks(xticks)
-    ax1.legend(loc='best',fontsize=8, framealpha=1)
+    ax1.legend(loc='best',fontsize=8, framealpha=0.8)
     plt.tight_layout()
     if saveplotspdf: plt.savefig("../figures/itercombboundaries.pdf")
     return fig
@@ -1652,6 +1676,13 @@ def get_central_flag(galquantity, galgrpid):
         cflag[satsel]=0.
     return cflag
 
+#def mem(tag):
+#    proc = psutil.Process(os.getpid())
+#    meminfo = proc.memory_info()
+#    print(f" ---------------- {tag} --------------------")
+#    print(f"Resident Set Size (RSS): {meminfo.rss / (1024 * 1024 * 1024):.2f} GB")
+#    print(f"Virtual Memory Size (VMS): {meminfo.vms / (1024 * 1024 * 1024):.2f} GB")
+
 # =============================================================================== #
 # =============================================================================== #
 if __name__=='__main__':
@@ -1668,7 +1699,7 @@ if __name__=='__main__':
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':'eco.pdf','saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
-           'pfof_Pth' : 0.999, \
+           'pfof_Pth' : 0.9, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True,\
             'ncores' : None,
             })
@@ -1677,6 +1708,7 @@ if __name__=='__main__':
     pg3grp=pg3ob.find_groups()[0]
     eco.loc[:,'pg3grp'] = pg3grp
     print('elapsed time was ', time.time()-t1)
+    eco.to_csv("../analysis/ECO_pg3_allspecz.csv")
 
     bins = np.arange(0.5,300.5,1)
     plt.figure()
