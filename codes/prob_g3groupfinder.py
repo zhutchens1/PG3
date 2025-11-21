@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import astropy.units as uu
 from astropy.cosmology import LambdaCDM, z_at_value
-from scipy.integrate import quad, simpson, IntegrationWarning
+from scipy.integrate import simpson
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 #from scipy.sparse import csr_array
@@ -20,9 +20,6 @@ from robustats import weighted_median
 from copy import deepcopy
 from datetime import datetime
 from joblib import Parallel, delayed
-import warnings
-#with warnings.catch_warnings():
-#    warnings.simplefilter("once",IntegrationWarning)
 from matplotlib.ticker import MaxNLocator, AutoLocator
 from matplotlib import rcParams
 rcParams['axes.labelsize'] = 9
@@ -33,7 +30,6 @@ rcParams['font.family'] = 'sans-serif'
 rcParams['grid.color'] = 'k'
 rcParams['grid.linewidth'] = 0.2
 my_locator = MaxNLocator(6)
-singlecolsize = (3.3522420091324205, 2.0717995001590714)
 doublecolsize = (7.500005949910059, 4.3880449973709)
 SPEED_OF_LIGHT = 2.998e5
 
@@ -430,6 +426,50 @@ class pg3(object):
 #################################################
 #################################################
 #################################################
+def dbint_D1_D2_pfof(z1, s1pdf, z2, s2pdf, VL_low, VL_high):
+    """
+    Numerically calculate double integrals of D1(z)*D2(zprime) for
+    probabilistic calculations. D1 and D2 are redshift PDFs.
+
+    Parameters
+    ----------------
+    z1 : array
+        Redshift (z) mesh corresponding to D1.
+    s1pdf : array
+        PDF values for D1.
+    z2 : array
+        Redshift (z) mesh corresponding to D2.
+    s2pdf : array
+        PDF values for D2.
+    g_or_e: float
+        Redshift range to search around, called gamma or epsilon
+        in this code.
+
+    Returns
+    -----------------
+    P12: float
+        Integration result P_12 for D1 and D2 given g_or_e.
+    """
+    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
+    ##D2 = interp1d(z2, s2pdf, fill_value=0)
+    #f_of_z = np.zeros(len(z1))
+    #for i in range(len(z1)):
+    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
+    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
+    #P12 = np.trapz(s1pdf*f_of_z, z1)
+    #return P12
+    cum_D2 = np.zeros(len(z2))
+    cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
+    lower = np.searchsorted(z2, z1 - VL_low, side='left')
+    upper = np.searchsorted(z2, z1 + VL_high, side='right')
+    lower = np.clip(lower, 0, len(z2)-1)
+    upper = np.clip(upper, 0, len(z2)-1)
+    f_of_z = cum_D2[upper] - cum_D2[lower]
+    P12 = np.trapz(s1pdf * f_of_z, z1)
+    return P12
+
+
+
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
     """
     -----
@@ -472,11 +512,10 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     dc_lower = los_cmvgdist - losll
     VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0, zmax=2, method='Bounded')
     VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0, zmax=2, method='Bounded') - cz
+    assert np.max(cz/SPEED_OF_LIGHT)<=2, "z_max can't be greater than 2; change PFoF code"
     friendship = np.zeros((Ngalaxies, Ngalaxies))
     # Compute on-sky perpendicular distance
-    column_phi = phi[:, None]
-    column_theta = theta[:, None]
-    half_angle = np.arcsin((np.sin((column_theta-theta)/2.0)**2.0 + np.sin(column_theta)*np.sin(theta)*np.sin((column_phi-phi)/2.0)**2.0)**0.5)
+    half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
     column_transv_cmvgdist = transv_cmvgdist[:, None]
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc/h
     # Compute line-of-sight probabilities
@@ -485,9 +524,9 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     c=SPEED_OF_LIGHT
     VL_lower = VL_lower / c
     VL_upper = VL_upper / c
+    meshZ = np.arange(0,1.2*np.max(cz)/c,np.min(czerr)/c/5) # resolution adapts to dataset
     def compute_prob(i,j):
-        return  i,j,quad(pfof_integral_asym, 0, 100, args=(cz[i], czerr[i], cz[j], czerr[j], VL_upper[i], VL_lower[i]),\
-                points=np.float64([cz[i]/c-5*czerr[i]/c,cz[i]/c-3*czerr[i]/c, cz[i]/c, cz[i]/c+3*czerr[i]/c, cz[i]/c+5*czerr[i]/c]),wvar=cz[i]/c)[0]
+        return i,j,dbint_D1_D2_pfof(meshZ, gauss_vectorized(meshZ, cz[i]/c, czerr[i]/c), meshZ, gauss_vectorized(meshZ, cz[j]/c, czerr[j]/c), VL_lower[i], VL_upper[i])
     if ncores==None:
         for i in range(0,Ngalaxies):
             for j in range(0, i+1):
@@ -516,23 +555,6 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
         print('PFoF complete!')
     return collapse_friendship_matrix(friendship)
     #return connected_components(csr_array(friendship))[1]
-
-def pfof_integral_asym(z, czi, czerri, czj, czerrj, VLupper, VLlower):
-    c=SPEED_OF_LIGHT
-    #return gauss(z, czi/c, czerri/c) * (0.5*math.erf((z+VL-czj/c)/((2**0.5)*czerrj/c)) - 0.5*math.erf((z-VL-czj/c)/((2**0.5)*czerrj/c)))
-    return gauss(z, czi/c, czerri/c) * 0.5 * (math.erf((czj/c - z + VLlower)/(1.41421*czerrj/c)) - math.erf((czj/c - z - VLupper)/(1.41421*czerrj/c)))
-
-def gauss(x, mu, sigma):
-    """
-    Gaussian function.
-    Arguments:
-        x - dynamic variable
-        mu - centroid of distribution
-        sigma - standard error of distribution
-    Returns:
-        PDF value evaluated at `x`
-    """
-    return 1/(math.sqrt(2*np.pi) * sigma) * math.exp(-1 * 0.5 * ((x-mu)/sigma) * ((x-mu)/sigma))
 
 def collapse_friendship_matrix(friendship_matrix):
     """
@@ -969,13 +991,13 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
 
     for gg in range(len(grpid)):
         gid = grpid[gg]
-        mask = (Rp[:, gg] < radius_boundary[gg]) & (DeltaV[:, gg] < 6000)
+        mask = (Rp[:, gg] < radius_boundary[gg])# & (DeltaV[:, gg] < 6000)
         indices = np.where(mask)[0]
         if len(indices) == 0:
             continue
         
         for fg in indices:
-            Poverlap = dwarf_association_integral(grpzpdf['zmesh'], grpzpdf_dict.get(gid, None), faintz[fg], faintzerr[fg], zrange[gg], zrange[gg])
+            Poverlap = dbint_D1_D2(grpzpdf['zmesh'], grpzpdf_dict.get(gid,None), grpzpdf['zmesh'], gauss_vectorized(grpzpdf['zmesh'], faintz[fg], faintzerr[fg]), zrange[gg])
             if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
                 prob_values[fg]=Poverlap
                 assoc_grpid[fg]=grpid[gg]
@@ -992,34 +1014,48 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     assoc_flag[still_isolated]=-1
     return assoc_grpid, assoc_flag
 
-def dwarf_association_integral(zgrid, grpzpdf, zdwarf, zerrdwarf, zrangeup, zrangelow):
-    """ 
-    calculate entire integral 
-    P = int_0^inf DG(z) * gamma(z) * dz where gamma(z) is as below and DG(z) is the group z distribution function
+def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     """
-    zgridnew = np.arange(0,max((np.max(zgrid),zdwarf+5*zerrdwarf)), zgrid[1]-zgrid[0]) # expand grid to be larger if needed
-    grpzpdfnew = np.interp(zgridnew, zgrid, grpzpdf, left=0, right=0)
-    grpzpdfnew /= simpson(grpzpdfnew,zgridnew) # normalize
-    integrand = grpzpdfnew * gamma_dwarf_assoc_subintegral(zgridnew, zdwarf, zerrdwarf, zrangeup, zrangelow)
-    return simpson(integrand, zgridnew)
+    Numerically calculate double integrals of D1(z)*D2(zprime) for
+    probabilistic calculations. D1 and D2 are redshift PDFs.
 
-def gamma_dwarf_assoc_subintegral(zgrid, zdwarf, zerrdwarf, zrangeup, zrangelow):
-    """
-    defined as gamma(z) = int_(z-zrangelow)^(z+zrangeup) G(zgrid | zdwarf, zerrdwarf) d(zgrid)
-    zgrid should be array
-    zrangeup, zrangelow scalars
-    zdwarf, zerrdwarf are redshift and uncertainty for dwarf galaxy being tested for association
-    """
-    return gaussian_integral(zdwarf, zerrdwarf, zgrid-zrangelow, zgrid+zrangeup)
+    Parameters
+    ----------------
+    z1 : array
+        Redshift (z) mesh corresponding to D1.
+    s1pdf : array
+        PDF values for D1.
+    z2 : array
+        Redshift (z) mesh corresponding to D2.
+    s2pdf : array
+        PDF values for D2.
+    g_or_e: float
+        Redshift range to search around, called gamma or epsilon
+        in this code.
 
-def gaussian_integral(mu, sigma, a, b):
+    Returns
+    -----------------
+    P12: float
+        Integration result P_12 for D1 and D2 given g_or_e.
     """
-    mean mu, dispersion sigma, limits of integration a, b (a is lower limit)
-    """
-    den = sigma*1.41421356
-    term1 = scipy_erf((b-mu)/den)
-    term2 = scipy_erf((a-mu)/den)
-    return 0.5*(term1 - term2)
+    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
+    ##D2 = interp1d(z2, s2pdf, fill_value=0)
+    #f_of_z = np.zeros(len(z1))
+    #for i in range(len(z1)):
+    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
+    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
+    #P12 = np.trapz(s1pdf*f_of_z, z1)
+    #return P12
+    cum_D2 = np.zeros(len(z2))
+    cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
+    lower = np.searchsorted(z2, z1 - g_or_e, side='left')
+    upper = np.searchsorted(z2, z1 + g_or_e, side='right')
+    lower = np.clip(lower, 0, len(z2)-1)
+    upper = np.clip(upper, 0, len(z2)-1)
+    f_of_z = cum_D2[upper] - cum_D2[lower]
+    P12 = np.trapz(s1pdf * f_of_z, z1)
+    return P12
+
 
 # =============================================================================== #
 # =============================================================================== #
@@ -1203,48 +1239,6 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     else:
         fitingroup = False
     return fitingroup
-
-def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
-    """
-    Numerically calculate double integrals of D1(z)*D2(zprime) for
-    iterative combination calculations. D1 and D2 are redshift PDFs. 
-
-    Parameters
-    ----------------
-    z1 : array
-        Redshift (z) mesh corresponding to D1.
-    s1pdf : array
-        PDF values for D1.
-    z2 : array
-        Redshift (z) mesh corresponding to D2.
-    s2pdf : array
-        PDF values for D2.
-    g_or_e: float
-        Redshift range to search around, called gamma or epsilon
-        in this code.
-
-    Returns
-    -----------------
-    P12: float
-        Integration result P_12 for D1 and D2 given g_or_e.
-    """
-    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
-    ##D2 = interp1d(z2, s2pdf, fill_value=0)
-    #f_of_z = np.zeros(len(z1))
-    #for i in range(len(z1)):
-    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
-    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
-    #P12 = np.trapz(s1pdf*f_of_z, z1)
-    #return P12
-    cum_D2 = np.zeros(len(z2))
-    cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
-    lower = np.searchsorted(z2, z1 - g_or_e, side='left')
-    upper = np.searchsorted(z2, z1 + g_or_e, side='right')
-    lower = np.clip(lower, 0, len(z2)-1)
-    upper = np.clip(upper, 0, len(z2)-1)
-    f_of_z = cum_D2[upper] - cum_D2[lower]
-    P12 = np.trapz(s1pdf * f_of_z, z1)
-    return P12
 
 def plot_rproj_vproj_1(uniqgiantgrpn, giantgrpn, relprojdist, wavg_relprojdist, wavg_relprojdist_err, rproj_bestfit, relvel, wavg_relvel, wavg_relvel_err, vproj_bestfit, keepcalsel, rproj_mult, vproj_mult, vproj_offs, saveplotspdf):
     fig,axs=plt.subplots(figsize=doublecolsize, ncols=2)
