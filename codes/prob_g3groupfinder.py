@@ -510,21 +510,20 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     los_cmvgdist = (cosmo.comoving_distance(cz/SPEED_OF_LIGHT).value)
     dc_upper = los_cmvgdist + losll
     dc_lower = los_cmvgdist - losll
-    VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0, zmax=2, method='Bounded')
-    VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0, zmax=2, method='Bounded') - cz
-    assert np.max(cz/SPEED_OF_LIGHT)<=2, "z_max can't be greater than 2; change PFoF code"
-    friendship = np.zeros((Ngalaxies, Ngalaxies))
+    VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0, zmax=10, method='Bounded')
+    VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0, zmax=10, method='Bounded') - cz
+    friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
     # Compute on-sky perpendicular distance
     half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
     column_transv_cmvgdist = transv_cmvgdist[:, None]
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc/h
     # Compute line-of-sight probabilities
-    prob_dlos=np.zeros((Ngalaxies, Ngalaxies))
+    prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
     np.fill_diagonal(prob_dlos,1)
     c=SPEED_OF_LIGHT
     VL_lower = VL_lower / c
     VL_upper = VL_upper / c
-    meshZ = np.arange(0,1.2*np.max(cz)/c,np.min(czerr)/c/5) # resolution adapts to dataset
+    meshZ = np.arange(0.8*np.min(cz)/c,1.2*np.max(cz)/c,np.min(czerr)/c/5, dtype=np.float32) # resolution adapts to dataset
     def compute_prob(i,j):
         return i,j,dbint_D1_D2_pfof(meshZ, gauss_vectorized(meshZ, cz[i]/c, czerr[i]/c), meshZ, gauss_vectorized(meshZ, cz[j]/c, czerr[j]/c), VL_lower[i], VL_upper[i])
     if ncores==None:
