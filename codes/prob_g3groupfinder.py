@@ -426,34 +426,13 @@ class pg3(object):
 #################################################
 #################################################
 #################################################
-def numeric_integration_pfof(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
-    """
-    Numerically integrate to find PFoF linking probability (sec 3, eq 6, Hutchens et al.).
-
-    Parameters
-    ------------------------------------------
-    zmesh - array of redshifts to integrate over
-    z1 - redshift of galaxy 1
-    sig1 - redshift uncertainty of galaxy 2
-    z2 - redshift of galaxy 2
-    sig2 - redshift uncertainty of galaxy 2
-    VL_lower - lower bound linking length, redshift units
-    VL_upper - upper bound linking length, redshift units
-
-    Returns 
-    ------------------------------------------
-    P12 - linking probability
-    """
-    g1pdf = gauss_vectorized(zmesh, z1, sig1)
-    den = 1.4142*sig2
-    erf_term = scipy_erf((z2 - zmesh + VL_lower)/den) - scipy_erf((z2 - zmesh - VL_upper)/den)
-    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh)
-    print(3e5*z1, 3e5*sig1, 3e5*z2, 3e5*sig2, P12)
-    print(3e5*VL_lower, 3e5*VL_upper)
-    print('------')
-    return P12 
-
-
+def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
+    zmesh = zmesh[None, :]
+    g1pdf = np.exp(-0.5 * ((zmesh - z1[:, None]) / sig1[:, None])**2) / (sig1[:, None] * np.sqrt(2 * np.pi))
+    den = 1.4142 * sig2[:, None]
+    erf_term = scipy_erf((z2[:, None] - zmesh + VL_lower[:, None]) / den) - scipy_erf((z2[:, None] - zmesh - VL_upper[:, None]) / den)
+    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh, axis=1)
+    return P12
 
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
     """
@@ -497,38 +476,33 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     dc_upper = los_cmvgdist + losll
     dc_lower = los_cmvgdist - losll
 
-    meshZ = np.arange(0.7*np.min(zz),1.3*np.max(zz),np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
+    meshZ = np.arange(0.5*np.min(zz),1.5*np.max(zz),np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
     z_dc_interp = interp1d(cosmo.comoving_distance(meshZ).value, meshZ)  
-    VL_lower = zz - z_dc_interp(dc_lower)
-    VL_upper = z_dc_interp(dc_upper) - zz 
+    VL_lower = np.float32(zz - z_dc_interp(dc_lower))
+    VL_upper = np.float32(z_dc_interp(dc_upper) - zz)
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
+
     # Compute on-sky perpendicular distance
     half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
     column_transv_cmvgdist = transv_cmvgdist[:, None]
-    dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc/h
+    dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc
+
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
     np.fill_diagonal(prob_dlos,1)
-    def compute_prob(i,j):
-        return i,j,numeric_integration_pfof(meshZ, zz[i], zzerr[i], zz[j], zzerr[j], VL_lower[i], VL_upper[i])
-    if ncores==None:
-        for i in range(0,Ngalaxies):
-            for j in range(0, i+1):
-                if j<i and dperp[i][j]<=perpll:
-                    val = compute_prob(i,j)
-                    prob_dlos[i][j]=val[-1]
-                    prob_dlos[j][i]=val[-1]
-    else:
-        i_array, j_array = np.where(dperp <= perpll)
-        sel = (j_array < i_array)
-        i_array = i_array[sel]
-        j_array = j_array[sel]
-        results = Parallel(n_jobs=ncores)(delayed(compute_prob)(i, j) for (i,j) in zip(i_array,j_array))
-        for res in results:
-            if res is not None:
-                i, j, val = res
-                prob_dlos[i][j] = val
-                prob_dlos[j][i] = val
+    
+    i_idx, j_idx = np.triu_indices(Ngalaxies, k=1)
+    mask = dperp[i_idx, j_idx] <= perpll
+    i_idx, j_idx = i_idx[mask], j_idx[mask]
+
+    zz_i, zz_j = zz[i_idx], zz[j_idx]
+    zzerr_i, zzerr_j = zzerr[i_idx], zzerr[j_idx]
+    VL_lower_i, VL_upper_i = VL_lower[i_idx], VL_upper[i_idx]
+
+    vals = numeric_integration_pfof_vectorized(meshZ, zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
+
+    prob_dlos[i_idx, j_idx] = vals
+    prob_dlos[j_idx, i_idx] = vals
 
     # Produce friendship matrix and return groups
     index = np.where(np.logical_and(prob_dlos>Pth, dperp<=perpll))
@@ -1022,14 +996,6 @@ def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     P12: float
         Integration result P_12 for D1 and D2 given g_or_e.
     """
-    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
-    ##D2 = interp1d(z2, s2pdf, fill_value=0)
-    #f_of_z = np.zeros(len(z1))
-    #for i in range(len(z1)):
-    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
-    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
-    #P12 = np.trapz(s1pdf*f_of_z, z1)
-    #return P12
     cum_D2 = np.zeros(len(z2))
     cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
     lower = np.searchsorted(z2, z1 - g_or_e, side='left')
@@ -1039,7 +1005,6 @@ def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     f_of_z = cum_D2[upper] - cum_D2[lower]
     P12 = np.trapz(s1pdf * f_of_z, z1)
     return P12
-
 
 # =============================================================================== #
 # =============================================================================== #
