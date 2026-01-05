@@ -179,7 +179,7 @@ class pg3(object):
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
         self.ncores = ncores
-        self.giantcalbounds = (np.array([0.05,0.05]), np.array([1e4,1e4]))
+        self.giantcalbounds = (array32([0.05,0.05]), array32([1e4,1e4]))
 
     def find_groups(self):
         """
@@ -259,8 +259,8 @@ class pg3(object):
             giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
             uniqgiantgrpn, uniqindex = np.unique(giantgrpn, return_index=True)
             keepcalsel = np.where(uniqgiantgrpn>1)
-            wavg_relprojdist = np.array([weighted_median(relprojdist[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
-            wavg_relvel = np.array([weighted_median(relvel[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
+            wavg_relprojdist = array32([weighted_median(relprojdist[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
+            wavg_relvel = array32([weighted_median(relvel[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
             wavg_relprojdist_err = np.zeros_like(wavg_relprojdist)
             wavg_relvel_err = np.zeros_like(wavg_relvel)
             for ii,nn in enumerate(uniqgiantgrpn[keepcalsel]):
@@ -271,7 +271,7 @@ class pg3(object):
             self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, uniqgiantgrpn[keepcalsel], wavg_relprojdist,  p0=self.rproj_fit_guess, maxfev=5000,sigma=wavg_relprojdist_err, bounds = self.giantcalbounds, absolute_sigma=True)
             self.rproj_bestfit_err = np.sqrt(np.diag(rproj_bestfit_cov))
         else:
-            self.rproj_bestfit = np.array(self.rproj_fit_params)
+            self.rproj_bestfit = array32(self.rproj_fit_params)
             self.rproj_bestfit_err = np.zeros(2)*1.
         if self.vproj_fit_params is None:
             try:
@@ -281,7 +281,7 @@ class pg3(object):
                 print("Code failed at `get_giantFoF_calibrations` -- likely no Ngiants>1 groups.")
                 exit()
         else:
-            self.vproj_bestfit = np.array(self.vproj_fit_params)
+            self.vproj_bestfit = array32(self.vproj_fit_params)
             self.vproj_bestfit_err = np.zeros(2)*1.
         
         self.rproj_boundary = lambda Ngiants:self.rproj_fit_multiplier*giantmodel(Ngiants, *self.rproj_bestfit)
@@ -354,13 +354,13 @@ class pg3(object):
             self.gd_rproj_bestfit, gd_rproj_cov=curve_fit(decayexp, self.magbincenters[~nansel], gdmedianrproj[~nansel], p0=self.gd_rproj_fit_guess)
             self.gd_rproj_bestfit_err = np.sqrt(np.diag(gd_rproj_cov))
         else:
-            self.gd_rproj_bestfit = np.array(gd_rproj_fit_params)
+            self.gd_rproj_bestfit = array32(gd_rproj_fit_params)
             self.gd_rproj_bestfit_err = np.zeros(len(gd_rproj_fit_params))*1.
         if (self.gd_vproj_fit_params is None):
             self.gd_vproj_bestfit, gd_vproj_cov=curve_fit(decayexp, self.magbincenters[~nansel], gdmedianrelvel[~nansel], p0=self.gd_vproj_fit_guess)
             self.gd_vproj_bestfit_err = np.sqrt(np.diag(gd_vproj_cov))
         else:
-            self.gd_vproj_bestfit = np.array(gd_vproj_fit_params)
+            self.gd_vproj_bestfit = array32(gd_vproj_fit_params)
             self.gd_vproj_bestfit_err = np.zeros(len(gd_vproj_fit_params))*1.
         self.rproj_for_iteration = lambda M: self.gd_rproj_fit_multiplier*decayexp(M, *self.gd_rproj_bestfit)
         self.vproj_for_iteration = lambda M: self.gd_vproj_fit_multiplier*decayexp(M, *self.gd_vproj_bestfit) + self.gd_vproj_fit_offset
@@ -528,7 +528,7 @@ def collapse_friendship_matrix(friendship_matrix):
         grpid (iterable): 1-D array of size N containing unique group ID numbers for every target.
     ----
     """
-    friendship_matrix=np.array(friendship_matrix)
+    friendship_matrix=array32(friendship_matrix)
     Ngalaxies = len(friendship_matrix[0])
     grpid = np.zeros(Ngalaxies)
     grpnumber = 1
@@ -748,11 +748,11 @@ def prob_iterative_combination_giants(galaxyra,galaxydec,galaxyz,galaxyzerr,gian
 
     """
     centermethod='arithmetic'
-    galaxyra=np.array(galaxyra)
-    galaxydec=np.array(galaxydec)
-    galaxyz=np.array(galaxyz)
-    galaxyzerr=np.array(galaxyzerr)
-    giantfofid=np.array(giantfofid)
+    galaxyra=array32(galaxyra)
+    galaxydec=array32(galaxydec)
+    galaxyz=array32(galaxyz)
+    galaxyzerr=array32(galaxyzerr)
+    giantfofid=array32(giantfofid)
     assert callable(rprojboundary),"Argument `rprojboundary` must callable function of N_giants."
     assert callable(vprojboundary),"Argument `vprojboundary` must callable function of N_giants."
 
@@ -792,7 +792,7 @@ def prob_giant_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,
     zmpc = cmvgdist * np.cos(pottheta)
     xmpc = cmvgdist * np.sin(pottheta)*np.cos(potphi)
     ympc = cmvgdist * np.sin(pottheta)*np.sin(potphi)
-    coords = np.array([xmpc, ympc, zmpc]).T
+    coords = array32([xmpc, ympc, zmpc]).T
     kdt = cKDTree(coords)
     _, nnind = kdt.query(coords,k=2)
     nnind=nnind[:,1] # ignore self-match
@@ -918,12 +918,12 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
         association flag for every galaxy (see function description). Length matches `faintra`.
     """
     cosmo = LambdaCDM(H0=H0, Om0=Om0, Ode0=Ode0) # this puts everything in "per h" units.
-    velocity_boundary=np.asarray(velocity_boundary)
-    radius_boundary=np.asarray(radius_boundary)
+    velocity_boundary=np.asarray(velocity_boundary).astype(np.float32)
+    radius_boundary=np.asarray(radius_boundary).astype(np.float32)
     Nfaint = len(faintra)
     assoc_grpid = np.zeros(Nfaint,dtype=int)
     assoc_flag = np.zeros(Nfaint,dtype=int)
-    prob_values=np.zeros(Nfaint)
+    prob_values=np.zeros(Nfaint,dtype=np.float32)
 
     # resize group coordinates to be the # of groups, not # galaxies
     junk, uniqind = np.unique(grpid, return_index=True)
@@ -1044,11 +1044,11 @@ def dwarf_iterative_combination(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxy
     assert (callable(rprojboundary) and callable(vprojboundary)),"Inputs `rprojboundary` and `vprojboundary` must be callable."
     assert (len(galaxyra)==len(galaxydec) and len(galaxydec)==len(galaxyz) and len(galaxyzerr)==len(galaxyz)),"RA/Dec/z/zerr inputs must have same shape."
     # Convert everything to numpy + create ID array (assuming for now all galaxies are isolated)
-    galaxyra = np.array(galaxyra)
-    galaxydec = np.array(galaxydec)
-    galaxyz = np.array(galaxyz)
-    galaxyzerr = np.array(galaxyzerr)
-    galaxymag = np.array(galaxymag)
+    galaxyra = array32(galaxyra)
+    galaxydec = array32(galaxydec)
+    galaxyz = array32(galaxyz)
+    galaxyzerr = array32(galaxyzerr)
+    galaxymag = array32(galaxymag)
     itassocid = np.arange(starting_id, starting_id+len(galaxyra))
     # Begin algorithm. 
     converged=False
@@ -1103,7 +1103,7 @@ def dwarf_nearest_neighbor_assign(galaxyra, galaxydec, galaxyz, galaxyzerr,  gal
     zmpc = dist * np.cos(pottheta) 
     xmpc = dist * np.sin(pottheta)*np.cos(potphi)
     ympc = dist * np.sin(pottheta)*np.sin(potphi)
-    coords = np.array([xmpc, ympc, zmpc]).T
+    coords = array32([xmpc, ympc, zmpc]).T
     kdt = cKDTree(coords)
     nndist, nnind = kdt.query(coords,k=2)
     nndist=nndist[:,1] # ignore self match
@@ -1223,7 +1223,7 @@ def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelpr
     gdrprojfit_mult, gdvprojfit_mult, gdvprojfit_offs, saveplotspdf):
     tx = np.linspace(-27,-17,100)
     fig, (ax,ax1) = plt.subplots(ncols=2, figsize=doublecolsize)
-    giantgrpn = np.array([np.sum((ecoabsrmag[ecogdsel][ecog3grp[ecogdsel]==gg]<-19.5)) for gg in ecog3grp[ecogdsel]])
+    giantgrpn = array32([np.sum((ecoabsrmag[ecogdsel][ecog3grp[ecogdsel]==gg]<-19.5)) for gg in ecog3grp[ecogdsel]])
     sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
     ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
@@ -1354,7 +1354,7 @@ def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,
 
     # lum func
     fig3=plt.figure()
-    eco_lf=(np.array([0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+    eco_lf=(array32([0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
        0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
        8.93424203e-06, 7.14739417e-06, 5.36054358e-06, 1.78684804e-05,
        4.46712438e-05, 7.50476102e-05, 1.50095453e-04, 1.94767577e-04,
@@ -1362,7 +1362,7 @@ def get_extra_biopage_plots(grpid,radeg,dedeg,zz,zzerr,absrmag,dwarfgiantdivide,
        7.57578760e-04, 8.62996560e-04, 9.95215494e-04, 1.07561890e-03,
        1.16495602e-03, 1.22229708e-03, 1.28857698e-03, 1.36542693e-03,
        1.40295830e-03, 1.55487098e-03, 1.68348849e-03, 1.76841393e-03,
-       2.06136331e-03, 2.06850842e-03, 1.23431720e-03]), np.array([-26.,
+       2.06136331e-03, 2.06850842e-03, 1.23431720e-03]), array32([-26.,
        -25.75, -25.5 , -25.25, -25.  , -24.75, -24.5 , -24.25,
        -24.  , -23.75, -23.5 , -23.25, -23.  , -22.75, -22.5 , -22.25,
        -22.  , -21.75, -21.5 , -21.25, -21.  , -20.75, -20.5 , -20.25,
@@ -1439,9 +1439,9 @@ def fwqm_relative_radius_laduma(ra, dec, zz):
     pointing center: 3:32:30.40  -28:07:57.0 hrs/deg
     in degrees: 53.126666, -27.8675
     """
-    ra = np.array(ra)
-    dec = np.array(dec)
-    zz = np.array(zz)
+    ra = array32(ra)
+    dec = array32(dec)
+    zz = array32(zz)
     laduma_pointing = (53.126666, -27.8675)
     angsep = angular_separation(ra, dec, laduma_pointing[0], laduma_pointing[1]) * 180/np.pi
     fwqm = LADUMA_FWQM(zz)
@@ -1469,7 +1469,7 @@ def LADUMA_FWQM(zz):
     fwqm : np.array
         FWQM beamwidths in units of degrees.
     """
-    zz = np.array(zz)
+    zz = array32(zz)
     fwqm = np.zeros_like(zz) - 999.
     lowz = (zz < 0.0892683)
     midz = (zz > 0.22519413) & (zz < 0.47959)
@@ -1508,21 +1508,21 @@ def get_grprproj_e17(galra, galdec, galz, galgrpid, groupra, groupdec, groupz, c
         Group projected radii in Mpc/h, length matches `galra`.
  
     """
-    galra = np.array(galra)
-    galdec = np.array(galdec)
-    galz = np.array(galz)
-    galgrpid = np.array(galgrpid)
-    groupra = np.array(groupra)
-    groupdec = np.array(groupdec)
-    groupz = np.array(groupz)
+    galra = array32(galra)
+    galdec = array32(galdec)
+    galz = array32(galz)
+    galgrpid = array32(galgrpid)
+    groupra = array32(groupra)
+    groupdec = array32(groupdec)
+    groupz = array32(groupz)
     rproj75dist = np.zeros(len(galgrpid))
     uniqgrpid = np.unique(galgrpid)
     for uid in uniqgrpid:
         galsel = np.where(galgrpid==uid)
         if len(galsel[0]) > 2:
-            ras = np.array(galra[galsel])
-            decs = np.array(galdec[galsel])
-            zs = np.array(galz[galsel])
+            ras = array32(galra[galsel])
+            decs = array32(galdec[galsel])
+            zs = array32(galz[galsel])
             grpn = len(galsel[0])
             grpra =  groupra[galsel][0]
             grpdec = groupdec[galsel][0]
@@ -1541,11 +1541,11 @@ def get_grprproj_e17(galra, galdec, galz, galgrpid, groupra, groupdec, groupz, c
     return rproj75dist
 
 def group_z_demographics(galra, galdec, galz, galzflag, galgrpid, cosmo, zphotflag_value=0, zspecflag_value=1):
-    galra = np.array(galra)
-    galdec = np.array(galdec)
-    galz = np.array(galz)
-    galzflag = np.array(galzflag)
-    galgrpid = np.array(galgrpid)
+    galra = array32(galra)
+    galdec = array32(galdec)
+    galz = array32(galz)
+    galzflag = array32(galzflag)
+    galgrpid = array32(galgrpid)
     uniqgrpid = np.unique(galgrpid)
     speczfrac = np.zeros_like(galra)
     largestdzspec = np.zeros_like(galra)-99.
@@ -1628,12 +1628,9 @@ def get_central_flag(galquantity, galgrpid):
         cflag[satsel]=0.
     return cflag
 
-#def mem(tag):
-#    proc = psutil.Process(os.getpid())
-#    meminfo = proc.memory_info()
-#    print(f" ---------------- {tag} --------------------")
-#    print(f"Resident Set Size (RSS): {meminfo.rss / (1024 * 1024 * 1024):.2f} GB")
-#    print(f"Virtual Memory Size (VMS): {meminfo.vms / (1024 * 1024 * 1024):.2f} GB")
+
+def array32(x):
+    return np.float32(x)
 
 # =============================================================================== #
 # =============================================================================== #
