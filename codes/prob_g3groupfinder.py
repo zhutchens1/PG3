@@ -949,7 +949,7 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
 
     for gg in range(len(grpid)):
         gid = grpid[gg]
-        mask = (Rp[:, gg] < radius_boundary[gg])# & (DeltaV[:, gg] < 6000)
+        mask = (Rp[:, gg] < radius_boundary[gg])
         indices = np.where(mask)[0]
         if len(indices) == 0:
             continue
