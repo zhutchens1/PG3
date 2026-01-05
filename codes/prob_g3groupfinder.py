@@ -1,6 +1,6 @@
 import math
 import matplotlib
-matplotlib.use('Agg')
+#matplotlib.use('Agg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -426,47 +426,32 @@ class pg3(object):
 #################################################
 #################################################
 #################################################
-def dbint_D1_D2_pfof(z1, s1pdf, z2, s2pdf, VL_low, VL_high):
+def numeric_integration_pfof(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
     """
-    Numerically calculate double integrals of D1(z)*D2(zprime) for
-    probabilistic calculations. D1 and D2 are redshift PDFs.
+    Numerically integrate to find PFoF linking probability (sec 3, eq 6, Hutchens et al.).
 
     Parameters
-    ----------------
-    z1 : array
-        Redshift (z) mesh corresponding to D1.
-    s1pdf : array
-        PDF values for D1.
-    z2 : array
-        Redshift (z) mesh corresponding to D2.
-    s2pdf : array
-        PDF values for D2.
-    g_or_e: float
-        Redshift range to search around, called gamma or epsilon
-        in this code.
+    ------------------------------------------
+    zmesh - array of redshifts to integrate over
+    z1 - redshift of galaxy 1
+    sig1 - redshift uncertainty of galaxy 2
+    z2 - redshift of galaxy 2
+    sig2 - redshift uncertainty of galaxy 2
+    VL_lower - lower bound linking length, redshift units
+    VL_upper - upper bound linking length, redshift units
 
-    Returns
-    -----------------
-    P12: float
-        Integration result P_12 for D1 and D2 given g_or_e.
+    Returns 
+    ------------------------------------------
+    P12 - linking probability
     """
-    #D2 = lambda x0: np.interp(x0, z2, s2pdf, 0, 0)
-    ##D2 = interp1d(z2, s2pdf, fill_value=0)
-    #f_of_z = np.zeros(len(z1))
-    #for i in range(len(z1)):
-    #    zprime = z2[(z2>(z1[i]-g_or_e)) & (z2<(z1[i]+g_or_e))]
-    #    f_of_z[i] = np.trapz(D2(zprime),zprime)
-    #P12 = np.trapz(s1pdf*f_of_z, z1)
-    #return P12
-    cum_D2 = np.zeros(len(z2))
-    cum_D2[1:] = np.cumsum((s2pdf[1:] + s2pdf[:-1]) / 2 * np.diff(z2))
-    lower = np.searchsorted(z2, z1 - VL_low, side='left')
-    upper = np.searchsorted(z2, z1 + VL_high, side='right')
-    lower = np.clip(lower, 0, len(z2)-1)
-    upper = np.clip(upper, 0, len(z2)-1)
-    f_of_z = cum_D2[upper] - cum_D2[lower]
-    P12 = np.trapz(s1pdf * f_of_z, z1)
-    return P12
+    g1pdf = gauss_vectorized(zmesh, z1, sig1)
+    den = 1.4142*sig2
+    erf_term = scipy_erf((z2 - zmesh + VL_lower)/den) - scipy_erf((z2 - zmesh - VL_upper)/den)
+    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh)
+    print(3e5*z1, 3e5*sig1, 3e5*z2, 3e5*sig2, P12)
+    print(3e5*VL_lower, 3e5*VL_upper)
+    print('------')
+    return P12 
 
 
 
@@ -525,7 +510,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
     np.fill_diagonal(prob_dlos,1)
     def compute_prob(i,j):
-        return i,j,dbint_D1_D2_pfof(meshZ, gauss_vectorized(meshZ, zz[i], zzerr[i]), meshZ, gauss_vectorized(meshZ, zz[j], zzerr[j]), VL_lower[i], VL_upper[i])
+        return i,j,numeric_integration_pfof(meshZ, zz[i], zzerr[i], zz[j], zzerr[j], VL_lower[i], VL_upper[i])
     if ncores==None:
         for i in range(0,Ngalaxies):
             for j in range(0, i+1):
