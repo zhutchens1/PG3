@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import astropy.units as uu
-from astropy.cosmology import LambdaCDM, z_at_value
+from astropy.cosmology import LambdaCDM
 from scipy.integrate import simpson
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
@@ -497,21 +497,25 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     -----
     """
     cosmo = LambdaCDM(H0=H0, Om0=Om0, Ode0=Ode0) # this puts everything in "per h" units.
+    c=SPEED_OF_LIGHT
     Ngalaxies = len(ra)
     ra = np.float32(ra)
     dec = np.float32(dec)
-    cz = np.float32(cz)
-    czerr = np.float32(czerr)
+    zz = np.float32(cz/c)
+    zzerr = np.float32(czerr/c)
     assert (len(ra)==len(dec) and len(dec)==len(cz)),"RA/Dec/cz arrays must equivalent length."
 
     phi = (ra * np.pi/180.)
     theta = (np.pi/2. - dec*(np.pi/180.))
-    transv_cmvgdist = (cosmo.comoving_transverse_distance(cz/SPEED_OF_LIGHT).value)
-    los_cmvgdist = (cosmo.comoving_distance(cz/SPEED_OF_LIGHT).value)
+    transv_cmvgdist = (cosmo.comoving_transverse_distance(zz).value)
+    los_cmvgdist = (cosmo.comoving_distance(zz).value)
     dc_upper = los_cmvgdist + losll
     dc_lower = los_cmvgdist - losll
-    VL_lower = cz - SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_lower*uu.Mpc, zmin=0.0, zmax=10, method='Bounded')
-    VL_upper = SPEED_OF_LIGHT*z_at_value(cosmo.comoving_distance, dc_upper*uu.Mpc, zmin=0.0, zmax=10, method='Bounded') - cz
+
+    meshZ = np.arange(0.7*np.min(zz),1.3*np.max(zz),np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
+    z_dc_interp = interp1d(cosmo.comoving_distance(meshZ).value, meshZ)  
+    VL_lower = zz - z_dc_interp(dc_lower)
+    VL_upper = z_dc_interp(dc_upper) - zz 
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
     # Compute on-sky perpendicular distance
     half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
@@ -520,12 +524,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
     np.fill_diagonal(prob_dlos,1)
-    c=SPEED_OF_LIGHT
-    VL_lower = VL_lower / c
-    VL_upper = VL_upper / c
-    meshZ = np.arange(0.8*np.min(cz)/c,1.2*np.max(cz)/c,np.min(czerr)/c/5, dtype=np.float32) # resolution adapts to dataset
     def compute_prob(i,j):
-        return i,j,dbint_D1_D2_pfof(meshZ, gauss_vectorized(meshZ, cz[i]/c, czerr[i]/c), meshZ, gauss_vectorized(meshZ, cz[j]/c, czerr[j]/c), VL_lower[i], VL_upper[i])
+        return i,j,dbint_D1_D2_pfof(meshZ, gauss_vectorized(meshZ, zz[i], zzerr[i]), meshZ, gauss_vectorized(meshZ, zz[j], zzerr[j]), VL_lower[i], VL_upper[i])
     if ncores==None:
         for i in range(0,Ngalaxies):
             for j in range(0, i+1):
