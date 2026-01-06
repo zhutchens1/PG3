@@ -665,7 +665,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
             groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
         else:
-            mesh_spacing = np.min(galaxyzerr[sel])/300.
+            mesh_spacing = np.min(galaxyzerr[sel])/10. # 10 points per standard deviation
             gx,gy,gz = galaxyz[sel]*galaxyxx[sel], galaxyz[sel]*galaxyyy[sel], galaxyz[sel]*galaxyzz[sel]
             gxerr,gyerr,gzerr = galaxyzerr[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyzz[sel]
             xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), mesh_spacing, dtype=np.float32)
