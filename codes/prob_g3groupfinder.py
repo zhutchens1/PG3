@@ -427,11 +427,13 @@ class pg3(object):
 #################################################
 
 def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
+    dz = zmesh[1]-zmesh[0]
     zmesh = zmesh[None, :]
     g1pdf = np.exp(-0.5 * ((zmesh - z1[:, None]) / sig1[:, None])**2) / (sig1[:, None] * np.sqrt(2 * np.pi))
     den = 1.4142 * sig2[:, None]
     erf_term = sc.erf((z2[:, None] - zmesh + VL_lower[:, None]) / den) - sc.erf((z2[:, None] - zmesh - VL_upper[:, None]) / den)
-    P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
+    #P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
+    P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
     return P12
 
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
@@ -695,7 +697,8 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
             z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)
-            z_pdfs[i]=(z_pdfs[i]/np.trapezoid(z_pdfs[i],zmesh))
+            #z_pdfs[i]=(z_pdfs[i]/np.trapezoid(z_pdfs[i],zmesh))
+            z_pdfs[i]=(z_pdfs[i]/np.sum(z_pdfs[i]*(zmesh[1]-zmesh[0])))
         pdfoutput = {'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers}
     else:
         pdfoutput=None
@@ -992,7 +995,8 @@ def dbint_doublegauss(zmesh, z1, sig1, z2, sig2, g_or_e):
     g1pdf = gauss_vectorized(zmesh, z1, sig1)
     den = 1.4142*sig2
     erf_term = sc.erf((z2 - zmesh + g_or_e)/den) - sc.erf((z2 - zmesh - g_or_e)/den)
-    P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh)
+    #P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh)
+    P12 = np.sum(0.5 * g1pdf * erf_term * (zmesh[1]-zmesh[0]))
     return P12 
  
 def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
@@ -1026,7 +1030,7 @@ def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     lower = np.clip(lower, 0, len(z2)-1)
     upper = np.clip(upper, 0, len(z2)-1)
     f_of_z = cum_D2[upper] - cum_D2[lower]
-    P12 = np.trapezoid(s1pdf * f_of_z, z1)
+    P12 = np.sum(s1pdf * f_of_z * (z1[1]-z1[0]))
     return P12
 
 
