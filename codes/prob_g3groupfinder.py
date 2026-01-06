@@ -1,27 +1,26 @@
 import math
 import matplotlib
-#matplotlib.use('Agg')
+matplotlib.use('Agg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import astropy.units as uu
 from astropy.cosmology import LambdaCDM
-from scipy.integrate import simpson
 from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 #from scipy.sparse import csr_array
 #from scipy.sparse.csgraph import connected_components
 from scipy.interpolate import interp1d
-from scipy.special import erf as scipy_erf
+import scipy.special as sc
 from smoothedbootstrap import smoothedbootstrap as sbs
 from center_binned_stats import center_binned_stats
-from robustats import weighted_median
+from weighted_median import weighted_median
 from copy import deepcopy
 from datetime import datetime
-from joblib import Parallel, delayed
-from matplotlib.ticker import MaxNLocator, AutoLocator
 from matplotlib import rcParams
+
+# globals
 rcParams['axes.labelsize'] = 9
 rcParams['xtick.labelsize'] = 9
 rcParams['ytick.labelsize'] = 9
@@ -29,7 +28,6 @@ rcParams['legend.fontsize'] = 9
 rcParams['font.family'] = 'sans-serif'
 rcParams['grid.color'] = 'k'
 rcParams['grid.linewidth'] = 0.2
-my_locator = MaxNLocator(6)
 doublecolsize = (7.500005949910059, 4.3880449973709)
 SPEED_OF_LIGHT = 2.998e5
 
@@ -179,7 +177,7 @@ class pg3(object):
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
         self.ncores = ncores
-        self.giantcalbounds = (array32([0.05,0.05]), array32([1e4,1e4]))
+        self.giantcalbounds = (np.float32([0.05,0.05]), np.float32([1e4,1e4]))
 
     def find_groups(self):
         """
@@ -427,12 +425,13 @@ class pg3(object):
 #################################################
 #################################################
 #################################################
+
 def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
     zmesh = zmesh[None, :]
     g1pdf = np.exp(-0.5 * ((zmesh - z1[:, None]) / sig1[:, None])**2) / (sig1[:, None] * np.sqrt(2 * np.pi))
     den = 1.4142 * sig2[:, None]
-    erf_term = scipy_erf((z2[:, None] - zmesh + VL_lower[:, None]) / den) - scipy_erf((z2[:, None] - zmesh - VL_upper[:, None]) / den)
-    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh, axis=1)
+    erf_term = sc.erf((z2[:, None] - zmesh + VL_lower[:, None]) / den) - sc.erf((z2[:, None] - zmesh - VL_upper[:, None]) / den)
+    P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
     return P12
 
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
@@ -512,8 +511,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
 
     if printConf:
         print('PFoF complete!')
-    return collapse_friendship_matrix(friendship)
     #return connected_components(csr_array(friendship))[1]
+    return collapse_friendship_matrix(friendship)
 
 def collapse_friendship_matrix(friendship_matrix):
     """
@@ -581,6 +580,7 @@ def get_group_ind(matrix, active_row_num, visited):
 ###########################################################################################
 ###########################################################################################
 # Group Center Definition Functions 
+
 def gauss_vectorized(x, mu, sigma):
     """
     Gaussian function.
@@ -630,11 +630,6 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
        groupz84 : 84th percentile of galaxy i's group redshift distribution.
        pdfoutput: If return_z_pdfs is True, this will be returned as a dictionary
                    with keys 'zmesh', 'pdf', and 'grpid'. Otherwise `None` is returned.
-    
-    Note: the FoF code of AA Berlind uses theta_i = declination, with theta_cen = 
-    the central declination. This version uses theta_i = pi/2-dec, with some trig functions
-    changed so that the output *matches* that of Berlind's FoF code (my "deccen" is the same as
-    his "thetacen", to be exact.)
     -----
     """
     # 
@@ -643,11 +638,11 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     ngalaxies = len(galaxyra)
     galaxyphi = galaxyra * np.pi/180.
     galaxytheta = np.pi/2. - galaxydec*np.pi/180.
-    galaxyxx = np.float32(np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1)) # equivalent to [:,np.newaxis]
-    galaxyyy = np.float32(np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1))
-    galaxyzz = np.float32(np.expand_dims(((np.cos(galaxytheta))),axis=1))
+    galaxyxx = (np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1)).astype(np.float32) # equivalent to [:,np.newaxis]
+    galaxyyy = (np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1)).astype(np.float32)
+    galaxyzz = (np.expand_dims(((np.cos(galaxytheta))),axis=1)).astype(np.float32)
     # Prepare output arrays
-    uniqidnumbers = np.int32(np.unique(galaxygrpid))
+    uniqidnumbers = np.unique(galaxygrpid).astype(np.int32)
     groupra = np.zeros(ngalaxies, dtype=np.float32)
     groupdec = np.zeros(ngalaxies, dtype=np.float32)
     groupz = np.zeros(ngalaxies, dtype=np.float32)
@@ -704,7 +699,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
             z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)
-            z_pdfs[i]=np.float32(z_pdfs[i]/simpson(z_pdfs[i],zmesh))
+            z_pdfs[i]=(z_pdfs[i]/np.trapezoid(z_pdfs[i],zmesh))
         pdfoutput = {'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers}
     else:
         pdfoutput=None
@@ -947,27 +942,27 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grp_cmvg = cosmo.comoving_transverse_distance(grpz).value
     half_angle = np.arcsin((np.sin((fainttheta-grptheta)/2.0)**2.0 + np.sin(fainttheta)*np.sin(grptheta)*np.sin((faintphi-grpphi)/2.0)**2.0)**0.5)
     Rp = (faint_cmvg + grp_cmvg) * (half_angle)/2
-    DeltaV = SPEED_OF_LIGHT*np.abs(faintz[:,None] - grpz)/(1+grpz)
+    #DeltaV = SPEED_OF_LIGHT*np.abs(faintz[:,None] - grpz)/(1+grpz)
     grpzpdf_dict = {gid: pdf for gid, pdf in zip(grpzpdf['grpid'], grpzpdf['pdf'])}
 
+    faint_galx_PDFs = gauss_vectorized(grpzpdf['zmesh'], faintz[:,np.newaxis], faintzerr[:,np.newaxis])
     for gg in range(len(grpid)):
-        cc = counts[gg]
         gid = grpid[gg]
+        gg_pdf = grpzpdf_dict.get(gid,None)
         mask = (Rp[:, gg] < radius_boundary[gg])
         indices = np.where(mask)[0]
         if len(indices) == 0:
             continue
-       
         for fg in indices:
-            if cc==1:
-                Poverlap = dbint_doublegauss(grpzpdf['zmesh'], grpz[gg], grpzerr[gg], faintz[fg], faintzerr[gg], zrange[gg])
-            else:    
-                Poverlap = dbint_D1_D2(grpzpdf['zmesh'], grpzpdf_dict.get(gid,None), grpzpdf['zmesh'], gauss_vectorized(grpzpdf['zmesh'], faintz[fg], faintzerr[fg]), zrange[gg])
-            if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
+            if counts[gg]==1:
+                Poverlap = dbint_doublegauss(grpzpdf['zmesh'], grpz[gg], grpzerr[gg], faintz[fg], faintzerr[fg], zrange[gg])
+            else:
+                Poverlap = dbint_D1_D2(grpzpdf['zmesh'], gg_pdf, grpzpdf['zmesh'], faint_galx_PDFs[fg], zrange[gg])
+            if (Poverlap>Pth) and (assoc_flag[fg]==0):
                 prob_values[fg]=Poverlap
                 assoc_grpid[fg]=grpid[gg]
                 assoc_flag[fg]=1
-            elif (Poverlap>Pth) and (bool(assoc_flag[fg])):
+            elif (Poverlap>Pth) and (assoc_flag[fg]==1):
                 # has already been assocated; is our new Poverlap better?
                 if Poverlap>prob_values[fg]:
                     prob_values[fg]=Poverlap
@@ -1000,10 +995,10 @@ def dbint_doublegauss(zmesh, z1, sig1, z2, sig2, g_or_e):
     """
     g1pdf = gauss_vectorized(zmesh, z1, sig1)
     den = 1.4142*sig2
-    erf_term = scipy_erf((z2 - zmesh + g_or_e)/den) - scipy_erf((z2 - zmesh - g_or_e)/den)
-    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh)
+    erf_term = sc.erf((z2 - zmesh + g_or_e)/den) - sc.erf((z2 - zmesh - g_or_e)/den)
+    P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh)
     return P12 
-
+ 
 def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     """
     Numerically calculate double integrals of D1(z)*D2(zprime) for
@@ -1035,8 +1030,9 @@ def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     lower = np.clip(lower, 0, len(z2)-1)
     upper = np.clip(upper, 0, len(z2)-1)
     f_of_z = cum_D2[upper] - cum_D2[lower]
-    P12 = np.trapz(s1pdf * f_of_z, z1)
+    P12 = np.trapezoid(s1pdf * f_of_z, z1)
     return P12
+
 
 # =============================================================================== #
 # =============================================================================== #
@@ -1660,9 +1656,8 @@ def get_central_flag(galquantity, galgrpid):
         cflag[satsel]=0.
     return cflag
 
-
 def array32(x):
-    return np.float32(x)
+    return np.float32(x) 
 
 # =============================================================================== #
 # =============================================================================== #
@@ -1677,7 +1672,7 @@ if __name__=='__main__':
     omega_de = 0.7
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
-    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':'eco.pdf','saveplotspdf':False,
+    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':None,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.9, \
