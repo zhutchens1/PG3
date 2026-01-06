@@ -314,14 +314,15 @@ class pg3(object):
         """
         self.dwarfsel = (self.absrmag>self.dwarfgiantdivide)
         if self.center_mode=='average' or self.center_mode=='giantaverage':
-            giantgrpra, giantgrpdec, giantgrpz, _, _, pdfdict = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel]/SPEED_OF_LIGHT,\
+            giantgrpra, giantgrpdec, giantgrpz, grpz16, grpz84, pdfdict = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel]/SPEED_OF_LIGHT,\
                     self.czerr[self.giantsel]/SPEED_OF_LIGHT, self.g3grpid[self.giantsel], True)
+            giantgrpzerr = 0.5*(grpz84 - grpz16)
         else:
             raise ValueError("center_mode must be `average` or `giantaverage`")
         
         giantgrpn = multiplicity_function(self.g3grpid[self.giantsel],return_by_galaxy=True)
         dwarfassocid, _ = prob_faint_assoc(self.radeg[self.dwarfsel],self.dedeg[self.dwarfsel],self.cz[self.dwarfsel]/SPEED_OF_LIGHT,self.czerr[self.dwarfsel]/SPEED_OF_LIGHT,\
-                            giantgrpra,giantgrpdec,giantgrpz,pdfdict,self.g3grpid[self.giantsel],self.rproj_boundary(giantgrpn),self.vproj_boundary(giantgrpn),\
+                            giantgrpra,giantgrpdec,giantgrpz,giantgrpzerr,pdfdict,self.g3grpid[self.giantsel],self.rproj_boundary(giantgrpn),self.vproj_boundary(giantgrpn),\
                              self.pfof_Pth, H0=self.H0,Om0=self.Om0,Ode0=self.Ode0)
         self.g3grpid[self.dwarfsel]=dwarfassocid
         print('Finished associating dwarfs to giant-only groups.')
@@ -880,7 +881,7 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
 #######################################################################
 ## Dwarf galaxy association code
 
-def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, grpzpdf, grpid, radius_boundary, velocity_boundary, Pth, H0=100., Om0=0.3, Ode0=0.7):
+def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, grpzerr, grpzpdf, grpid, radius_boundary, velocity_boundary, Pth, H0=100., Om0=0.3, Ode0=0.7):
     """
     Associate galaxies to a group catalog based on given radius and velocity boundaries, based on a method
     similar to that presented in Eckert+ 2016. As used in Hutchens+2023 
@@ -900,7 +901,9 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpdec : iterable
         Declination of group centers in degrees. Length matches `grpra`.
     grpz : iterable
-        Redshift velocity of group center in km/s. Length matches `grpra`.
+        Redshift of group center.  Length matches `grpra`.
+    grpzerr : iterable
+        Redshift uncertainty on group center.
     grpzpdf : dict
         zpdfs for giant-only groups
     grpid : iterable
@@ -926,10 +929,11 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     prob_values=np.zeros(Nfaint,dtype=np.float32)
     
     # resize group coordinates to be the # of groups, not # galaxies
-    grpid, uniqind = np.unique(grpid, return_index=True)
+    grpid, uniqind, counts = np.unique(grpid, return_index=True, return_counts=True)
     grpra = grpra[uniqind]
     grpdec = grpdec[uniqind]
     grpz = grpz[uniqind]
+    grpzerr = grpzerr[uniqind]
     velocity_boundary=velocity_boundary[uniqind]
     radius_boundary=radius_boundary[uniqind]
     zrange = (1+grpz) * velocity_boundary/SPEED_OF_LIGHT
@@ -947,14 +951,18 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpzpdf_dict = {gid: pdf for gid, pdf in zip(grpzpdf['grpid'], grpzpdf['pdf'])}
 
     for gg in range(len(grpid)):
+        cc = counts[gg]
         gid = grpid[gg]
         mask = (Rp[:, gg] < radius_boundary[gg])
         indices = np.where(mask)[0]
         if len(indices) == 0:
             continue
-        
+       
         for fg in indices:
-            Poverlap = dbint_D1_D2(grpzpdf['zmesh'], grpzpdf_dict.get(gid,None), grpzpdf['zmesh'], gauss_vectorized(grpzpdf['zmesh'], faintz[fg], faintzerr[fg]), zrange[gg])
+            if cc==1:
+                Poverlap = dbint_doublegauss(grpzpdf['zmesh'], grpz[gg], grpzerr[gg], faintz[fg], faintzerr[gg], zrange[gg])
+            else:    
+                Poverlap = dbint_D1_D2(grpzpdf['zmesh'], grpzpdf_dict.get(gid,None), grpzpdf['zmesh'], gauss_vectorized(grpzpdf['zmesh'], faintz[fg], faintzerr[fg]), zrange[gg])
             if (Poverlap>Pth) and (not bool(assoc_flag[fg])):
                 prob_values[fg]=Poverlap
                 assoc_grpid[fg]=grpid[gg]
@@ -970,6 +978,31 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     assoc_grpid[still_isolated]=np.arange(np.max(grpid)+1, np.max(grpid)+1+len(still_isolated[0]), 1)
     assoc_flag[still_isolated]=-1
     return assoc_grpid, assoc_flag
+
+def dbint_doublegauss(zmesh, z1, sig1, z2, sig2, g_or_e):
+    """
+    Numerically integrate to find PFoF linking probability (sec 3, eq 6, Hutchens et al.).
+    This is for the simpler case of two Gaussian PDFs.
+
+    Parameters
+    ------------------------------------------
+    zmesh - array of redshifts to integrate over
+    z1 - redshift of galaxy 1
+    sig1 - redshift uncertainty of galaxy 2
+    z2 - redshift of galaxy 2
+    sig2 - redshift uncertainty of galaxy 2
+    VL_lower - lower bound linking length, redshift units
+    VL_upper - upper bound linking length, redshift units
+
+    Returns 
+    ------------------------------------------
+    P12 - linking probability
+    """
+    g1pdf = gauss_vectorized(zmesh, z1, sig1)
+    den = 1.4142*sig2
+    erf_term = scipy_erf((z2 - zmesh + g_or_e)/den) - scipy_erf((z2 - zmesh - g_or_e)/den)
+    P12 = np.trapz(0.5 * g1pdf * erf_term, zmesh)
+    return P12 
 
 def dbint_D1_D2(z1, s1pdf, z2, s2pdf, g_or_e):
     """
