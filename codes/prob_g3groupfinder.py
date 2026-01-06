@@ -1,6 +1,6 @@
 import math
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('TkAgg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -690,11 +690,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
     if return_z_pdfs:
-        try:
-            zmesh = np.arange(0, np.max(galaxyz)+0.1, 1/cspeed, dtype=np.float32)
-        except MemoryError:
-            print("MemoryWarning: zmesh is too fine at line 523 in prob_g3groupfinder; trying at 20 km/s resolution")
-            zmesh = np.arange(0, np.max(galaxyz)+0.1, 20/cspeed, dtype=np.float32)
+        zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
         z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
