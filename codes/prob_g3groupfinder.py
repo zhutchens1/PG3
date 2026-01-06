@@ -924,13 +924,12 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     assoc_grpid = np.zeros(Nfaint,dtype=int)
     assoc_flag = np.zeros(Nfaint,dtype=int)
     prob_values=np.zeros(Nfaint,dtype=np.float32)
-
+    
     # resize group coordinates to be the # of groups, not # galaxies
-    junk, uniqind = np.unique(grpid, return_index=True)
+    grpid, uniqind = np.unique(grpid, return_index=True)
     grpra = grpra[uniqind]
     grpdec = grpdec[uniqind]
     grpz = grpz[uniqind]
-    grpid = grpid[uniqind]
     velocity_boundary=velocity_boundary[uniqind]
     radius_boundary=radius_boundary[uniqind]
     zrange = (1+grpz) * velocity_boundary/SPEED_OF_LIGHT
