@@ -1,6 +1,6 @@
 import math
 import matplotlib
-matplotlib.use('TkAgg')
+#matplotlib.use('Agg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,9 +36,9 @@ class pg3(object):
                      iterative_giant_only_groups=False, n_bootstraps=1000, rproj_fit_guess=None, rproj_fit_params = None, rproj_fit_multiplier=None,\
                      vproj_fit_guess = None, vproj_fit_params = None, vproj_fit_multiplier=None, vproj_fit_offset=0, gd_rproj_fit_guess=None, gd_rproj_fit_params = None,\
                      gd_rproj_fit_multiplier=None, gd_vproj_fit_guess=None, gd_vproj_fit_params = None, gd_vproj_fit_multiplier=None,gd_vproj_fit_offset=None,
-                     gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, ncores=None, saveplotspdf=False, summary_page_savepath=None):
+                     gd_fit_bins=None,H0=100., Om0=0.3, Ode0=0.7, saveplotspdf=False, summary_page_savepath=None):
         """
-        Identify galaxy groups in redshift space using the probabilistic G3 algorithm (Hutchens+2025, in prep.)
+        Identify galaxy groups in redshift space using the probabilistic G3 algorithm (Hutchens+2026, in prep.)
         A modified and extended version of the algorithm presented in Hutchens + 2023.
 
         Parameters
@@ -129,6 +129,8 @@ class pg3(object):
         self.dedeg=np.float32(dedeg)
         self.cz=np.float32(cz)
         self.czerr=np.float32(czerr)
+        if (self.czerr<10).any():
+            print("WARNING: Some redshift errors are <10 km/s equivalent. This code samples at 10 km/s resolution.")
         self.absrmag=np.float32(absrmag)
         assert (not np.isnan(self.radeg).any()), "RA values must not contain NaNs."
         assert (not np.isnan(self.dedeg).any()), "DEC values must not contain NaNs."
@@ -176,7 +178,6 @@ class pg3(object):
         self.gd_vproj_fit_multiplier = gd_vproj_fit_multiplier
         self.gd_vproj_fit_offset = gd_vproj_fit_offset
         self.gd_fit_bins = gd_fit_bins
-        self.ncores = ncores
         self.giantcalbounds = (np.float32([0.05,0.05]), np.float32([1e4,1e4]))
 
     def find_groups(self):
@@ -230,11 +231,11 @@ class pg3(object):
         self.giantsel = (self.absrmag<=self.dwarfgiantdivide)
         if self.fof_sep is not None:
             giantfofid = pfof_comoving(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel], self.czerr[self.giantsel],\
-                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0, ncores=self.ncores)
+                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0)
         else:
             self.fof_sep = (self.volume/np.sum(self.giantsel))**(1/3.)
             giantfofid = pfof_comoving(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel], self.czerr[self.giantsel], \
-                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0, ncores=self.ncores)
+                         self.fof_bperp*self.fof_sep, self.fof_blos*self.fof_sep, self.pfof_Pth, H0=self.H0, Om0=self.Om0, Ode0=self.Ode0)
         self.g3grpid[self.giantsel] = giantfofid
         return None
 
@@ -436,7 +437,7 @@ def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_
     P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
     return P12
 
-def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True, ncores=None):
+def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True):
     """
     -----
     Compute group membership from galaxies' equatorial  coordinates using a probabilitiy
@@ -456,7 +457,6 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
         Pth (float): Threshold probability from which to construct the group catalog. If None, the
             function will return a NxN matrix of friendship probabilities.
         printConf (bool, default True): bool indicating whether to print confirmation at the end.
-        ncores (int, # of cores for multiprocessing, default None = no multiprocessing)
     Returns:
         grpid (np.array): list containing unique group ID numbers for each target in the input coordinates.
                 The list will have shape len(ra).
@@ -1676,9 +1676,7 @@ if __name__=='__main__':
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
            'pfof_Pth' : 0.9, \
-           'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True,\
-            'ncores' : None,
-            })
+           'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
     pg3grp=pg3ob.find_groups()[0]
