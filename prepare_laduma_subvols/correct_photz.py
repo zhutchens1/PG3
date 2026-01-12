@@ -74,6 +74,11 @@ def get_abs_mag(tractorID, xmmservs_cat, xmmservs_seds, zbest_key):
     return MM
 
 if __name__=='__main__':
+    print("WARNING -- there is a selection effect here in that redshifts don't look well corrected")
+    print("when selected on bestzoverall rather than zphot. The selection of the volume-limited sample")
+    print("probably needs to happen iteratively *with* the zphot corrections because they are intricately")
+    print("related.")
+        
     # ----------------------------------------------------------------- #
     # split redshift catalog into bins
     xmms = pd.read_csv(direc["redshift_catalog"])
@@ -83,7 +88,9 @@ if __name__=='__main__':
     rband_zp_depth = np.median(xmms.mag_R_VOICE[(xmms.mag_I_VOICE>iband_zp_depth-0.1)&(xmms.mag_I_VOICE<iband_zp_depth+0.1)])
     xmms = xmms[(xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0) & (xmms.mag_I_VOICE<iband_zp_depth)]
 
-    fitting_bins = np.arange(0,1.4,0.4)
+    #fitting_bins = np.arange(0,1.4,0.4)
+    fitting_bins = [0,0.1,0.5,0.8,1.4]
+    #fitting_bins = np.arange(0.0,1.5,0.1)
     xmms.loc[:,'zphotcorr_bin'] = np.digitize(xmms.zphot.to_numpy(), bins=fitting_bins)
 
     # ----------------------------------------------------------------- #
@@ -103,13 +110,17 @@ if __name__=='__main__':
             figpath = './zp_correction_plots_logs/zphot_corr_{zmin:0.2f}_to_{zmax:0.2f}.png'.format(zmin=np.min(gg.zphot), zmax=np.max(gg.zphot))
             logpath = figpath.replace('png','txt')
             ct = corrector(gg, 'zphot', 'zphoterr', 'zspecbest', 'mag_R_VOICE', 'goodzflag', imag_key='mag_I_VOICE', imag_cut=24, \
-                    save_final_fig_path=figpath, log_file_path=logpath, bic_diff_thresh=0, force_linear_fit1=True)
+                    save_final_fig_path=figpath, log_file_path=logpath, bic_diff_thresh=0, force_linear_fit1=True, force_linear_fit2=False,\
+                    convg_threshold=0.3)
             zpcorr, etabcorr, flag = ct.run()
+            if (etabcorr<0).any():
+                print('warning - some corrected uncertainties are negative.')
             gg.loc[:,'zphotcorr'] = zpcorr
             gg.loc[:,'zphoterrcorr'] = etabcorr
             gg.loc[:,'zphotcorrected'] = flag #1=corrected 0=not corr.
             processed.append(gg)
             counts.append(len(gg))
+
     xmms = pd.concat(processed, axis=0)
     assert len(xmms)==np.sum(counts)
 
@@ -122,14 +133,22 @@ if __name__=='__main__':
     zbestflag[spec_avail] = 1
     xmms.loc[:,'bestoverallz'] = zbest
     xmms.loc[:,'bestoverallzerr'] = zbesterr
-    xmms.loc[:,'bestoverallzflag'] = zbestflag #1=photz 2=specz
+    xmms.loc[:,'bestoverallzflag'] = zbestflag #0=photz, 1=specz
 
+    #sv = xmms[(xmms.bestoverallz>0) & (xmms.bestoverallz<=0.1) & ~pd.isna(xmms.mag_R_VOICE)]
+    #plt.figure()
+    #sel = (sv.zspecbest>0)
+    #bv = np.arange(-4,4,0.1)
+    #plt.hist((sv[sel].zphot-sv[sel].zspecbest)/sv[sel].zphoterr, bins=bv)
+    #plt.hist((sv[sel].zphotcorr-sv[sel].zspecbest)/sv[sel].zphoterrcorr, bins=bv,alpha=0.5)
+    #print(np.median(sv[sel].zphot-sv[sel].zspecbest))
+    #print(np.median(sv[sel].zphotcorr-sv[sel].zspecbest))
+    #plt.show()
+    #exit()
     ### Calculate abs magnitudes
     seds = h5py.File(direc['sedfile'],'r')
     xmms = xmms.set_index('Tractor_ID')
     absrmag = np.zeros(len(xmms))
-    #for ii,Tid in (xmms.index.to_numpy()):
-    #    absrmag[ii] = get_abs_mag(Tid, xmms, seds, 'bestoverallz')
     worker = lambda Tid: get_abs_mag(Tid, xmms, seds, 'bestoverallz')
     ids_to_process = xmms.index.to_numpy()
     with ProcessingPool(60) as pool:
@@ -140,7 +159,7 @@ if __name__=='__main__':
     selection = (xmms.bestoverallz>0) & (xmms.bestoverallz < np.max(fitting_bins)) & (xmms.mag_R_VOICE<rband_zp_depth) & (xmms.mag_R_VOICE>0)
     magcols = [kk for kk in xmms.columns if (kk.startswith('mag') or kk.startswith('absmag'))]
     zcols = [kk for kk in xmms.columns if (kk.endswith('zspec_cat') or kk.startswith('z') or kk.startswith('bestov'))]
-    cols_to_keep = ['RA','DEC',"Mstar_gal","Mstar_gal_err"]+magcols+zcols
+    cols_to_keep = ['RA','DEC',"Mstar_gal","Mstar_gal_err","Qz",'goodzflag']+magcols+zcols
     xmms = xmms.loc[selection, cols_to_keep]
 
     plt.figure()
@@ -172,7 +191,8 @@ if __name__=='__main__':
         fname = "subvolume_{:0.2f}_to_{:0.2f}.csv".format(zmin,zmax)
         subvolume = xmms[(xmms.bestoverallz>zmin) & (xmms.bestoverallz<=zmax) & ~pd.isna(xmms.mag_R_VOICE)]
         ngal = len(subvolume)
-        SA = solid_angle(subvolume.RA, subvolume.DEC, bins=1000) / 3282.8 # converted from deg2 to steradians
+        SA = solid_angle(subvolume.RA, subvolume.DEC, bins=700) / 3282.8 # converted from deg2 to steradians
+
         vol = integrate_volume(np.linspace(zmin,zmax,10000), SA, 70., 0.3, 0.7)
         Mrlim = absMag_distmod(zmax, rband_zp_depth)
         log.write(f"{fname}\t{int(ngal)}\t{zmin:0.2f}\t{zmax:0.2f}\t{SA:0.6E}\t{vol:0.6E}\t{Mrlim:0.2f}\n")

@@ -137,6 +137,7 @@ class pg3(object):
         assert (not np.isnan(self.cz).any()), "cz values must not contain NaNs."
         assert (not np.isnan(self.czerr).any()), "czerr values must not contain NaNs."
         assert (not np.isnan(self.absrmag).any()), "absrmag values must not contain NaNs."
+        assert (self.czerr>0).all(), "Redshift uncertainties must be positive."
         if (cz<20).all():
             print("WARNING: all input cz's are <20 km/s. Intepreting as z (not cz)...")
             self.cz = self.cz*SPEED_OF_LIGHT
