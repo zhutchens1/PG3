@@ -1,6 +1,6 @@
 import math
 import matplotlib
-#matplotlib.use('Agg')
+matplotlib.use('Agg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -478,11 +478,12 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     dc_upper = los_cmvgdist + losll
     dc_lower = los_cmvgdist - losll
 
-    meshZ = np.arange(0.5*np.min(zz),1.5*np.max(zz),np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
-    z_dc_interp = interp1d(cosmo.comoving_distance(meshZ).value, meshZ)  
+    z_arr_interp = np.arange(0.00001,2*np.max(zz), np.min(zzerr)/3)
+    z_dc_interp = interp1d(cosmo.comoving_distance(z_arr_interp).value, z_arr_interp)  
     VL_lower = np.float32(zz - z_dc_interp(dc_lower))
     VL_upper = np.float32(z_dc_interp(dc_upper) - zz)
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
+    del z_arr_interp
 
     # Compute on-sky perpendicular distance
     half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
@@ -501,6 +502,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     zzerr_i, zzerr_j = zzerr[i_idx], zzerr[j_idx]
     VL_lower_i, VL_upper_i = VL_lower[i_idx], VL_upper[i_idx]
 
+    zmin_, zmax_ = np.min(zz)-3*np.max(zzerr),np.max(zz)+3*np.max(zzerr)
+    meshZ = np.arange((zmin_ if zmin_>0 else 0), zmax_, np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
     vals = numeric_integration_pfof_vectorized(meshZ, zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
 
     prob_dlos[i_idx, j_idx] = vals
