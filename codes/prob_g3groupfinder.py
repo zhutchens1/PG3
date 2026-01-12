@@ -1,6 +1,6 @@
 import math
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('TkAgg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,6 +19,7 @@ from weighted_median import weighted_median
 from copy import deepcopy
 from datetime import datetime
 from matplotlib import rcParams
+from tqdm import tqdm
 
 # globals
 rcParams['axes.labelsize'] = 9
@@ -949,7 +950,7 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpzpdf_dict = {gid: pdf for gid, pdf in zip(grpzpdf['grpid'], grpzpdf['pdf'])}
 
     faint_galx_PDFs = gauss_vectorized(grpzpdf['zmesh'], faintz[:,np.newaxis], faintzerr[:,np.newaxis])
-    for gg in range(len(grpid)):
+    for gg in tqdm(range(len(grpid)), total=len(grpid)):
         gid = grpid[gg]
         gg_pdf = grpzpdf_dict.get(gid,None)
         mask = (Rp[:, gg] < radius_boundary[gg])
@@ -958,7 +959,7 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
             continue
         for fg in indices:
             if counts[gg]==1:
-                Poverlap = dbint_doublegauss(grpzpdf['zmesh'], grpz[gg], grpzerr[gg], faintz[fg], faintzerr[fg], zrange[gg])
+                Poverlap = dbint_doublegauss(grpzpdf['zmesh'], gg_pdf, faintz[fg], faintzerr[fg], zrange[gg])
             else:
                 Poverlap = dbint_D1_D2(grpzpdf['zmesh'], gg_pdf, grpzpdf['zmesh'], faint_galx_PDFs[fg], zrange[gg])
             if (Poverlap>Pth) and (assoc_flag[fg]==0):
@@ -977,7 +978,7 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     assoc_flag[still_isolated]=-1
     return assoc_grpid, assoc_flag
 
-def dbint_doublegauss(zmesh, z1, sig1, z2, sig2, g_or_e):
+def dbint_doublegauss(zmesh, g1pdf, z2, sig2, g_or_e):
     """
     Numerically integrate to find PFoF linking probability (sec 3, eq 6, Hutchens et al.).
     This is for the simpler case of two Gaussian PDFs.
@@ -996,10 +997,8 @@ def dbint_doublegauss(zmesh, z1, sig1, z2, sig2, g_or_e):
     ------------------------------------------
     P12 - linking probability
     """
-    g1pdf = gauss_vectorized(zmesh, z1, sig1)
     den = 1.4142*sig2
     erf_term = sc.erf((z2 - zmesh + g_or_e)/den) - sc.erf((z2 - zmesh - g_or_e)/den)
-    #P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh)
     P12 = np.sum(0.5 * g1pdf * erf_term * (zmesh[1]-zmesh[0]))
     return P12 
  
