@@ -130,8 +130,6 @@ class pg3(object):
         self.dedeg=np.float32(dedeg)
         self.cz=np.float32(cz)
         self.czerr=np.float32(czerr)
-        if (self.czerr<10).any():
-            print("WARNING: Some redshift errors are <10 km/s equivalent. This code samples at 10 km/s resolution.")
         self.absrmag=np.float32(absrmag)
         assert (not np.isnan(self.radeg).any()), "RA values must not contain NaNs."
         assert (not np.isnan(self.dedeg).any()), "DEC values must not contain NaNs."
@@ -143,6 +141,10 @@ class pg3(object):
             print("WARNING: all input cz's are <20 km/s. Intepreting as z (not cz)...")
             self.cz = self.cz*SPEED_OF_LIGHT
             self.czerr = self.czerr*SPEED_OF_LIGHT
+        if (czerr/SPEED_OF_LIGHT > 1).any():
+            print(f"WARNING: {np.sum((czerr/SPEED_OF_LIGHT)>1)} input galaxies have redshift uncertainty >1. This may raise memory consumption significantly.")
+        if (self.czerr<10).any():
+            print(f"WARNING: {np.sum(self.czerr<10)} redshift uncertainties are <10 km/s equivalent. This code samples at 10 km/s resolution.")
         self.g3grpid = np.zeros_like(radeg)-99.
         self.g3ssid = np.zeros_like(radeg)-99.
         self.H0 = H0
@@ -256,9 +258,35 @@ class pg3(object):
                 raise ValueError('Check group center definition (`center_mode`), only `average` or `giantaverage` (equivalent) currently supported')
             relvel = np.abs(giantgrpcz - self.cz[self.giantsel])/(1+giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
             grp_ctd = self.cosmo.comoving_transverse_distance(giantgrpz).value
-            relprojdist = (grp_ctd+grp_ctd)*np.sin(angular_separation(giantgrpra, giantgrpdec, self.radeg[self.giantsel],self.dedeg[self.giantsel])/2.0)
+            gia_ctd = self.cosmo.comoving_transverse_distance(self.cz[self.giantsel]/SPEED_OF_LIGHT).value
+            relprojdist = (grp_ctd+gia_ctd)*np.sin(angular_separation(giantgrpra, giantgrpdec, self.radeg[self.giantsel],self.dedeg[self.giantsel])/2.0)
             giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
             uniqgiantgrpn, uniqindex = np.unique(giantgrpn, return_index=True)
+
+            #---------------------------------#
+            fig,axs=plt.subplots(ncols=2)
+            axs[0].plot(giantgrpn, relprojdist, 'r.')
+            axs[0].set_ylim(0,1)
+            axs[0].set_xlim(0,20)
+            axs[1].plot(giantgrpn, relvel, 'r.')
+            axs[1].set_ylim(0,1000)
+            axs[1].set_xlim(0,20)
+            plt.title('test plot')
+            plt.show()
+
+            print('----debug------')            
+            debugsel = self.g3grpid[self.giantsel]==102#(giantgrpn==2) & (relprojdist>1)
+            print('RA: ', self.radeg[self.giantsel][debugsel])
+            print('Dec: ', self.dedeg[self.giantsel][debugsel])
+            print('cz: ', self.cz[self.giantsel][debugsel])
+            print('grp: ', self.g3grpid[self.giantsel][debugsel])
+            print('grpra: ', giantgrpra[debugsel])
+            print('grpdec: ', giantgrpdec[debugsel])
+            print('grpz: ', giantgrpz[debugsel])
+            print('relprojdist: ', relprojdist[debugsel])
+            exit()
+            #---------------------------------#
+
             keepcalsel = np.where(uniqgiantgrpn>1)
             wavg_relprojdist = array32([weighted_median(relprojdist[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
             wavg_relvel = array32([weighted_median(relvel[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
@@ -481,7 +509,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     dc_lower = los_cmvgdist - losll
 
     z_arr_interp = np.arange(0.00001,2*np.max(zz), np.min(zzerr)/3)
-    z_dc_interp = interp1d(cosmo.comoving_distance(z_arr_interp).value, z_arr_interp)  
+    z_dc_interp = interp1d(cosmo.comoving_distance(z_arr_interp).value, z_arr_interp, fill_value=0, bounds_error=False)
     VL_lower = np.float32(zz - z_dc_interp(dc_lower))
     VL_upper = np.float32(z_dc_interp(dc_upper) - zz)
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
@@ -667,12 +695,14 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
             groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
         else:
-            mesh_spacing = np.min(galaxyzerr[sel])/10. # 10 points per standard deviation
             gx,gy,gz = galaxyz[sel]*galaxyxx[sel], galaxyz[sel]*galaxyyy[sel], galaxyz[sel]*galaxyzz[sel]
             gxerr,gyerr,gzerr = galaxyzerr[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyzz[sel]
-            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), mesh_spacing, dtype=np.float32)
-            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), mesh_spacing, dtype=np.float32) 
-            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), mesh_spacing, dtype=np.float32)
+            xmesh_spacing = np.min(np.abs(gxerr)) / 10.0 # 10 pts per standard dev.
+            ymesh_spacing = np.min(np.abs(gyerr)) / 10.0
+            zmesh_spacing = np.min(np.abs(gzerr)) / 10.0
+            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), xmesh_spacing, dtype=np.float32)
+            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), ymesh_spacing, dtype=np.float32) 
+            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), zmesh_spacing, dtype=np.float32)
             x16,xcen,x84 = get_median_eCDF(xmesh, np.sum(gauss_vectorized(xmesh, gx, gxerr),axis=0), percentiles=[0.16,0.5,0.84])
             y16,ycen,y84 = get_median_eCDF(ymesh, np.sum(gauss_vectorized(ymesh, gy, gyerr),axis=0), percentiles=[0.16,0.5,0.84])
             z16,zcen,z84 = get_median_eCDF(zmesh, np.sum(gauss_vectorized(zmesh, gz, gzerr),axis=0),  percentiles=[0.16,0.5,0.84])
@@ -691,6 +721,26 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             elif (xcen==0 and ycen==0):
                  print("Warning: xcen=0 and ycen=0 for group ", uid)
             racen=np.arctan(ycen/xcen)*(180/np.pi)+phicor # in degrees
+            if uid==102:
+                print('-----inside prob_group_skycoords-----')
+                print(galaxyra[sel])
+                print(galaxydec[sel])
+                print(3e5*galaxyz[sel])
+                print(racen)
+                print(deccen)
+                print(redshiftcen)
+                print('---------')
+                nmembers=len(galaxygrpid[sel])
+                print(xcen, np.sum(galaxyz[sel]*galaxyxx[sel])/nmembers)
+                print(ycen, np.sum(galaxyz[sel]*galaxyyy[sel])/nmembers)
+                print(zcen, np.sum(galaxyz[sel]*galaxyzz[sel])/nmembers)
+                print('--------alt')
+                rr=np.sqrt(xcen**2.+ycen**2.+zcen**2.)
+                deccen=np.degrees(np.arctan2(zcen,rr))
+                racen = np.degrees(np.arctan2(ycen,xcen))
+                print(racen,deccen)
+                exit()
+
             groupra[sel] = racen # in degrees
             groupdec[sel] = deccen # in degrees
             groupz[sel] = redshiftcen
@@ -1199,8 +1249,6 @@ def dwarfic_fit_in_group(galra, galdec, galz, galzerr, galgrpid, galmag, rprojbo
     seed2grpra,seed2grpdec,seed2grpz,_,_,seed2pdf = prob_group_skycoords(galra[seed2sel],galdec[seed2sel],galz[seed2sel],galzerr[seed2sel],galgrpid[seed2sel], True)
     allgrpra,allgrpdec,allgrpz,_,_,_ = prob_group_skycoords(galra, galdec, galz, galzerr, np.zeros(len(galra)), False)
 
-    debug_condition = ((allgrpra[0]>185.14) and (allgrpra[0]<185.17) and (allgrpdec[0]>20.65) and (allgrpdec[0]<20.68))
-
     # Compute radial separations
     angsep1 = angular_separation(allgrpra[0], allgrpdec[0], seed1grpra[0], seed1grpdec[0])
     angsep2 = angular_separation(allgrpra[0], allgrpdec[0], seed2grpra[0], seed2grpdec[0])
@@ -1255,7 +1303,7 @@ def plot_rproj_vproj_2(ecog3grp, ecoabsrmag, ecogdsel, ecogdtotalmag, ecogdrelpr
     tx = np.linspace(-27,-17,100)
     fig, (ax,ax1) = plt.subplots(ncols=2, figsize=doublecolsize)
     giantgrpn = array32([np.sum((ecoabsrmag[ecogdsel][ecog3grp[ecogdsel]==gg]<-19.5)) for gg in ecog3grp[ecogdsel]])
-    sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
+    sel_ = np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))#np.where(np.logical_and(giantgrpn==1,ecogdtotalmag>-24))
     ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='mediumorchid', alpha=0.6, label=r'ECO $N_{\rm giants}=1$ Group Galaxies', rasterized=True)
     sel_ = np.where(np.logical_and(giantgrpn==2,ecogdtotalmag>-24))
     ax.plot(ecogdtotalmag[sel_], ecogdrelprojdist[sel_], '.', color='darkorange', alpha=0.6, label=r'ECO $N_{\rm giants}=2$ Group Galaxies', rasterized=True)
