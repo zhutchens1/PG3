@@ -21,6 +21,8 @@ from datetime import datetime
 from matplotlib import rcParams
 from tqdm import tqdm
 
+np.random.seed(2)
+
 # globals
 rcParams['axes.labelsize'] = 9
 rcParams['xtick.labelsize'] = 9
@@ -262,31 +264,6 @@ class pg3(object):
             relprojdist = (grp_ctd+gia_ctd)*np.sin(angular_separation(giantgrpra, giantgrpdec, self.radeg[self.giantsel],self.dedeg[self.giantsel])/2.0)
             giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
             uniqgiantgrpn, uniqindex = np.unique(giantgrpn, return_index=True)
-
-            #---------------------------------#
-            fig,axs=plt.subplots(ncols=2)
-            axs[0].plot(giantgrpn, relprojdist, 'r.')
-            axs[0].set_ylim(0,1)
-            axs[0].set_xlim(0,20)
-            axs[1].plot(giantgrpn, relvel, 'r.')
-            axs[1].set_ylim(0,1000)
-            axs[1].set_xlim(0,20)
-            plt.title('test plot')
-            plt.show()
-
-            print('----debug------')            
-            debugsel = self.g3grpid[self.giantsel]==102#(giantgrpn==2) & (relprojdist>1)
-            print('RA: ', self.radeg[self.giantsel][debugsel])
-            print('Dec: ', self.dedeg[self.giantsel][debugsel])
-            print('cz: ', self.cz[self.giantsel][debugsel])
-            print('grp: ', self.g3grpid[self.giantsel][debugsel])
-            print('grpra: ', giantgrpra[debugsel])
-            print('grpdec: ', giantgrpdec[debugsel])
-            print('grpz: ', giantgrpz[debugsel])
-            print('relprojdist: ', relprojdist[debugsel])
-            exit()
-            #---------------------------------#
-
             keepcalsel = np.where(uniqgiantgrpn>1)
             wavg_relprojdist = array32([weighted_median(relprojdist[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
             wavg_relvel = array32([weighted_median(relvel[np.where(giantgrpn==sz)], 1/self.czerr[np.where(giantgrpn==sz)]) for sz in uniqgiantgrpn[keepcalsel]])
@@ -667,7 +644,6 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
                    with keys 'zmesh', 'pdf', and 'grpid'. Otherwise `None` is returned.
     -----
     """
-    # 
     assert len(galaxyzerr)==len(galaxyz)
     # Prepare cartesian coordinates of input galaxies
     ngalaxies = len(galaxyra)
@@ -703,44 +679,24 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), xmesh_spacing, dtype=np.float32)
             ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), ymesh_spacing, dtype=np.float32) 
             zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), zmesh_spacing, dtype=np.float32)
-            x16,xcen,x84 = get_median_eCDF(xmesh, np.sum(gauss_vectorized(xmesh, gx, gxerr),axis=0), percentiles=[0.16,0.5,0.84])
-            y16,ycen,y84 = get_median_eCDF(ymesh, np.sum(gauss_vectorized(ymesh, gy, gyerr),axis=0), percentiles=[0.16,0.5,0.84])
-            z16,zcen,z84 = get_median_eCDF(zmesh, np.sum(gauss_vectorized(zmesh, gz, gzerr),axis=0),  percentiles=[0.16,0.5,0.84])
-            redshiftcen = np.sqrt(xcen*xcen + ycen*ycen + zcen*zcen)
-            redshift16 = np.sqrt(x16*x16 + y16*y16 + z16*z16)
-            redshift84 = np.sqrt(x84*x84 + y84*y84 + z84*z84)
-            deccen = np.arcsin(zcen/redshiftcen)*180.0/np.pi # degrees
-            if (ycen >=0 and xcen>=0):
-                phicor = 0.0
-            elif (ycen < 0 and xcen < 0):
-                 phicor = 180.0
-            elif (ycen >= 0 and xcen < 0):
-                phicor = 180.0
-            elif (ycen < 0 and xcen >=0):
-                phicor = 360.0
-            elif (xcen==0 and ycen==0):
-                 print("Warning: xcen=0 and ycen=0 for group ", uid)
-            racen=np.arctan(ycen/xcen)*(180/np.pi)+phicor # in degrees
-            if uid==102:
-                print('-----inside prob_group_skycoords-----')
-                print(galaxyra[sel])
-                print(galaxydec[sel])
-                print(3e5*galaxyz[sel])
-                print(racen)
-                print(deccen)
-                print(redshiftcen)
-                print('---------')
-                nmembers=len(galaxygrpid[sel])
-                print(xcen, np.sum(galaxyz[sel]*galaxyxx[sel])/nmembers)
-                print(ycen, np.sum(galaxyz[sel]*galaxyyy[sel])/nmembers)
-                print(zcen, np.sum(galaxyz[sel]*galaxyzz[sel])/nmembers)
-                print('--------alt')
-                rr=np.sqrt(xcen**2.+ycen**2.+zcen**2.)
-                deccen=np.degrees(np.arctan2(zcen,rr))
-                racen = np.degrees(np.arctan2(ycen,xcen))
-                print(racen,deccen)
-                exit()
-
+            gxdist=np.sum(gauss_vectorized(xmesh, gx, np.abs(gxerr)),axis=0)
+            gydist=np.sum(gauss_vectorized(ymesh, gy, np.abs(gyerr)),axis=0)
+            gzdist=np.sum(gauss_vectorized(zmesh, gz, np.abs(gzerr)),axis=0)
+            # jointly sample the 3D distribution of X, Y, and Z
+            gx_ind = np.random.choice(len(xmesh), size=5000, p=gxdist/np.sum(gxdist))
+            gy_ind = np.random.choice(len(ymesh), size=5000, p=gydist/np.sum(gydist))
+            gz_ind = np.random.choice(len(zmesh), size=5000, p=gzdist/np.sum(gzdist))
+            gx_sample = xmesh[gx_ind]
+            gy_sample = ymesh[gy_ind]
+            gz_sample = zmesh[gz_ind]
+            # use samples to find most likely centers
+            redshift_cen_sample = np.sqrt(gx_sample*gx_sample + gy_sample*gy_sample + gz_sample*gz_sample)
+            redshiftcen = np.median(redshift_cen_sample)
+            redshift16 = np.percentile(redshift_cen_sample, 16)
+            redshift84 = np.percentile(redshift_cen_sample, 84)
+            deccen = np.median(np.arcsin(gz_sample / redshift_cen_sample)*180/np.pi)
+            racen = np.median(np.arctan2(gy_sample,gx_sample)*180/np.pi) # arctan2 handles quadrant differences
+            racen = np.where(racen<0,racen+360,racen)
             groupra[sel] = racen # in degrees
             groupdec[sel] = deccen # in degrees
             groupz[sel] = redshiftcen
@@ -1723,10 +1679,11 @@ if __name__=='__main__':
     omega_de = 0.7
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
-    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':None,'saveplotspdf':False,
+    pdfname = None#'eco.pdf'
+    gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':pdfname,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
-           'pfof_Pth' : 0.9, \
+           'pfof_Pth' : 0.95, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
