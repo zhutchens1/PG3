@@ -1,6 +1,6 @@
 import math
 import matplotlib
-matplotlib.use('TkAgg')
+#matplotlib.use('TkAgg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,7 +13,6 @@ from scipy.spatial import cKDTree
 #from scipy.sparse.csgraph import connected_components
 from scipy.interpolate import interp1d
 import scipy.special as sc
-from smoothedbootstrap import smoothedbootstrap as sbs
 from center_binned_stats import center_binned_stats
 from weighted_median import weighted_median
 from copy import deepcopy
@@ -662,6 +661,81 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     cspeed=SPEED_OF_LIGHT
     galaxyz = np.expand_dims(galaxyz,axis=1)
     galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
+    zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
+    if return_z_pdfs:
+        z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
+    for i,uid in enumerate(uniqidnumbers):
+        sel=np.where(galaxygrpid==uid)
+        if len(sel[0])==1:
+            groupra[sel] = galaxyra[sel]
+            groupdec[sel] = galaxydec[sel]
+            groupz[sel] = galaxyz[sel]
+            groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
+            groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
+            if return_z_pdfs:
+                pdf = np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)        
+                pdf /= np.sum(pdf*(zmesh[1]-zmesh[0]))
+                z_pdfs[i] = pdf
+        else:
+            racen = np.average(galaxyra[sel], weights=galaxyzerr[sel].T[0])
+            deccen = np.average(galaxydec[sel], weights=galaxyzerr[sel].T[0])
+            pdf = np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)        
+            pdf /= np.sum(pdf*(zmesh[1]-zmesh[0]))
+            z16,z50,z84 = get_median_eCDF(zmesh, pdf, [0.16,0.5,0.84])
+            groupra[sel] = racen # in degrees
+            groupdec[sel] = deccen # in degrees
+            groupz[sel] = z50
+            groupz16[sel] = z16
+            groupz84[sel] = z84
+            if return_z_pdfs:
+                z_pdfs[i] = pdf
+    pdfoutput = ({'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers} if return_z_pdfs else None)
+    return groupra, groupdec, groupz, groupz16, groupz84, pdfoutput
+
+#@deprecated
+def __depr_prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, return_z_pdfs=False):
+    """
+    -----
+    Obtain a list of group centers (RA/Dec/z) given a list of galaxy coordinates (equatorial)
+    and their corresponding group ID numbers. This is based on Hutchens+2024 (paper 3) and incorporates
+    the photometric redshift errors when determining group centers.
+    
+    Inputs (all same length)
+       galaxyra : 1D iterable,  list of galaxy RA values in decimal degrees
+       galaxydec : 1D iterable, list of galaxy dec values in decimal degrees
+       galaxyz : 1D iterable, list of galaxy z values in redshift units (NOT km/s)
+       galaxyzerr : 1D iterable, list of galaxy z 
+       galaxygrpid : 1D iterable, group ID number for every galaxy in previous arguments.
+       return_z_pdfs: True/False (default False), dictates whether group z PDFs are returned.
+    
+    Outputs (all shape match `galaxyra`)
+       groupra : RA in decimal degrees of galaxy i's group center.
+       groupdec : Declination in decimal degrees of galaxy i's group center.
+       groupz : Redshift of galaxy i's group center.
+       groupz16 : 16th percentile of galaxy i's group redshift distribution.
+       groupz84 : 84th percentile of galaxy i's group redshift distribution.
+       pdfoutput: If return_z_pdfs is True, this will be returned as a dictionary
+                   with keys 'zmesh', 'pdf', and 'grpid'. Otherwise `None` is returned.
+    -----
+    """
+    assert len(galaxyzerr)==len(galaxyz)
+    # Prepare cartesian coordinates of input galaxies
+    ngalaxies = len(galaxyra)
+    galaxyphi = galaxyra * np.pi/180.
+    galaxytheta = np.pi/2. - galaxydec*np.pi/180.
+    galaxyxx = (np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1)).astype(np.float32) # equivalent to [:,np.newaxis]
+    galaxyyy = (np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1)).astype(np.float32)
+    galaxyzz = (np.expand_dims(((np.cos(galaxytheta))),axis=1)).astype(np.float32)
+    # Prepare output arrays
+    uniqidnumbers = np.unique(galaxygrpid).astype(np.int32)
+    groupra = np.zeros(ngalaxies, dtype=np.float32)
+    groupdec = np.zeros(ngalaxies, dtype=np.float32)
+    groupz = np.zeros(ngalaxies, dtype=np.float32)
+    groupz16 = np.zeros(ngalaxies, dtype=np.float32)
+    groupz84 = np.zeros(ngalaxies, dtype=np.float32)
+    cspeed=SPEED_OF_LIGHT
+    galaxyz = np.expand_dims(galaxyz,axis=1)
+    galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
     for i,uid in enumerate(uniqidnumbers):
         sel=np.where(galaxygrpid==uid)
         if len(sel[0])==1:
@@ -672,36 +746,49 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
         else:
             gx,gy,gz = galaxyz[sel]*galaxyxx[sel], galaxyz[sel]*galaxyyy[sel], galaxyz[sel]*galaxyzz[sel]
-            gxerr,gyerr,gzerr = galaxyzerr[sel]*galaxyxx[sel], galaxyzerr[sel]*galaxyyy[sel], galaxyzerr[sel]*galaxyzz[sel]
+            gxerr,gyerr,gzerr = np.abs(galaxyzerr[sel]*galaxyxx[sel]), np.abs(galaxyzerr[sel]*galaxyyy[sel]), np.abs(galaxyzerr[sel]*galaxyzz[sel])
             xmesh_spacing = np.min(np.abs(gxerr)) / 10.0 # 10 pts per standard dev.
             ymesh_spacing = np.min(np.abs(gyerr)) / 10.0
             zmesh_spacing = np.min(np.abs(gzerr)) / 10.0
-            xmesh = np.arange(np.min(gx)-5*np.max(np.abs(gxerr)), np.max(gx)+5*np.max(np.abs(gxerr)), xmesh_spacing, dtype=np.float32)
-            ymesh = np.arange(np.min(gy)-5*np.max(np.abs(gyerr)), np.max(gy)+5*np.max(np.abs(gyerr)), ymesh_spacing, dtype=np.float32) 
-            zmesh = np.arange(np.min(gz)-5*np.max(np.abs(gzerr)), np.max(gz)+5*np.max(np.abs(gzerr)), zmesh_spacing, dtype=np.float32)
+            xmesh = np.arange(np.min(gx)-3*np.max(np.abs(gxerr)), np.max(gx)+3*np.max(np.abs(gxerr)), xmesh_spacing, dtype=np.float32)
+            ymesh = np.arange(np.min(gy)-3*np.max(np.abs(gyerr)), np.max(gy)+3*np.max(np.abs(gyerr)), ymesh_spacing, dtype=np.float32) 
+            zmesh = np.arange(np.min(gz)-3*np.max(np.abs(gzerr)), np.max(gz)+3*np.max(np.abs(gzerr)), zmesh_spacing, dtype=np.float32)
             gxdist=np.sum(gauss_vectorized(xmesh, gx, np.abs(gxerr)),axis=0)
             gydist=np.sum(gauss_vectorized(ymesh, gy, np.abs(gyerr)),axis=0)
             gzdist=np.sum(gauss_vectorized(zmesh, gz, np.abs(gzerr)),axis=0)
+            normx = np.sum(gxdist*(xmesh[1]-xmesh[0]))
+            normy = np.sum(gydist*(ymesh[1]-ymesh[0]))
+            normz = np.sum(gzdist*(zmesh[1]-zmesh[0]))
+            gxdist /= normx
+            gydist /= normy
+            gzdist /= normz
             # jointly sample the 3D distribution of X, Y, and Z
-            gx_ind = np.random.choice(len(xmesh), size=5000, p=gxdist/np.sum(gxdist))
-            gy_ind = np.random.choice(len(ymesh), size=5000, p=gydist/np.sum(gydist))
-            gz_ind = np.random.choice(len(zmesh), size=5000, p=gzdist/np.sum(gzdist))
+            gx_ind = np.random.choice(len(xmesh), size=int(1e4), p=gxdist/np.sum(gxdist))
+            gy_ind = np.random.choice(len(ymesh), size=int(1e4), p=gydist/np.sum(gydist))
+            gz_ind = np.random.choice(len(zmesh), size=int(1e4), p=gzdist/np.sum(gzdist))
             gx_sample = xmesh[gx_ind]
             gy_sample = ymesh[gy_ind]
             gz_sample = zmesh[gz_ind]
-            # use samples to find most likely centers
             redshift_cen_sample = np.sqrt(gx_sample*gx_sample + gy_sample*gy_sample + gz_sample*gz_sample)
+            # use samples to find most likely centers
             redshiftcen = np.median(redshift_cen_sample)
             redshift16 = np.percentile(redshift_cen_sample, 16)
             redshift84 = np.percentile(redshift_cen_sample, 84)
-            deccen = np.median(np.arcsin(gz_sample / redshift_cen_sample)*180/np.pi)
-            racen = np.median(np.arctan2(gy_sample,gx_sample)*180/np.pi) # arctan2 handles quadrant differences
-            racen = np.where(racen<0,racen+360,racen)
+            deccen = np.median(np.degrees(np.arcsin(gz_sample / redshift_cen_sample))) # np.median(galaxydec[sel])
+            racen = np.median(np.degrees(np.arctan2(gy_sample,gx_sample)))
+            racen = np.where(racen<0, racen+360, racen)
             groupra[sel] = racen # in degrees
             groupdec[sel] = deccen # in degrees
             groupz[sel] = redshiftcen
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
+            #if ((racen>np.max(galaxyra[sel])) or (racen<np.min(galaxyra[sel]))):
+            #    print(uid, racen, galaxyra[sel])
+            #nmembers=len(sel[0])
+            #xcentest = np.sum(galaxyz[sel]*galaxyxx[sel])/nmembers
+            #ycentest=np.sum(galaxyz[sel]*galaxyyy[sel])/nmembers
+            #print('h23 ra_cen: ', np.degrees(np.arctan2(ycentest,xcentest)))
+            #print('------')
     if return_z_pdfs:
         zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
         z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
@@ -1681,14 +1768,13 @@ if __name__=='__main__':
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':pdfname,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
-           'pfof_Pth' : 0.95, \
+           'pfof_Pth' : 0.9, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
     pg3grp=pg3ob.find_groups()[0]
     eco.loc[:,'pg3grp'] = pg3grp
     print('elapsed time was ', time.time()-t1)
-    eco.to_csv("../analysis/ECO_pg3_allspecz.csv")
 
     bins = np.arange(0.5,300.5,1)
     plt.figure()
