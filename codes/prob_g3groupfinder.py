@@ -667,7 +667,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
         if len(sel[0])==1:
             groupra[sel] = galaxyra[sel]
             groupdec[sel] = galaxydec[sel]
-            groupz[sel] = galaxyz[sel]#*cspeed
+            groupz[sel] = galaxyz[sel]
             groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
             groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
         else:
@@ -708,13 +708,11 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
             z_pdfs[i]=np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)
-            #z_pdfs[i]=(z_pdfs[i]/np.trapezoid(z_pdfs[i],zmesh))
             z_pdfs[i]=(z_pdfs[i]/np.sum(z_pdfs[i]*(zmesh[1]-zmesh[0])))
         pdfoutput = {'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers}
     else:
         pdfoutput=None
     return groupra, groupdec, groupz, groupz16, groupz84, pdfoutput
-
 
 ######################################################################################################
 ######################################################################################################
