@@ -321,13 +321,12 @@ class pg3(object):
         if self.center_mode=='average' or self.center_mode=='giantaverage':
             giantgrpra, giantgrpdec, giantgrpz, grpz16, grpz84, pdfdict = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel], self.cz[self.giantsel]/SPEED_OF_LIGHT,\
                     self.czerr[self.giantsel]/SPEED_OF_LIGHT, self.g3grpid[self.giantsel], True)
-            giantgrpzerr = 0.5*(grpz84 - grpz16)
         else:
             raise ValueError("center_mode must be `average` or `giantaverage`")
         
         giantgrpn = multiplicity_function(self.g3grpid[self.giantsel],return_by_galaxy=True)
         dwarfassocid, _ = prob_faint_assoc(self.radeg[self.dwarfsel],self.dedeg[self.dwarfsel],self.cz[self.dwarfsel]/SPEED_OF_LIGHT,self.czerr[self.dwarfsel]/SPEED_OF_LIGHT,\
-                            giantgrpra,giantgrpdec,giantgrpz,giantgrpzerr,pdfdict,self.g3grpid[self.giantsel],self.rproj_boundary(giantgrpn),self.vproj_boundary(giantgrpn),\
+                            giantgrpra,giantgrpdec,giantgrpz,pdfdict,self.g3grpid[self.giantsel],self.rproj_boundary(giantgrpn),self.vproj_boundary(giantgrpn),\
                              self.pfof_Pth, H0=self.H0,Om0=self.Om0,Ode0=self.Ode0)
         self.g3grpid[self.dwarfsel]=dwarfassocid
         print('Finished associating dwarfs to giant-only groups.')
@@ -661,81 +660,6 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     cspeed=SPEED_OF_LIGHT
     galaxyz = np.expand_dims(galaxyz,axis=1)
     galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
-    zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
-    if return_z_pdfs:
-        z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
-    for i,uid in enumerate(uniqidnumbers):
-        sel=np.where(galaxygrpid==uid)
-        if len(sel[0])==1:
-            groupra[sel] = galaxyra[sel]
-            groupdec[sel] = galaxydec[sel]
-            groupz[sel] = galaxyz[sel]
-            groupz16[sel] = galaxyz[sel]-galaxyzerr[sel]
-            groupz84[sel] = galaxyz[sel]+galaxyzerr[sel]
-            if return_z_pdfs:
-                pdf = np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)        
-                pdf /= np.sum(pdf*(zmesh[1]-zmesh[0]))
-                z_pdfs[i] = pdf
-        else:
-            racen = np.average(galaxyra[sel], weights=galaxyzerr[sel].T[0])
-            deccen = np.average(galaxydec[sel], weights=galaxyzerr[sel].T[0])
-            pdf = np.sum(gauss_vectorized(zmesh, galaxyz[sel], galaxyzerr[sel]), axis=0, dtype=np.float32)        
-            pdf /= np.sum(pdf*(zmesh[1]-zmesh[0]))
-            z16,z50,z84 = get_median_eCDF(zmesh, pdf, [0.16,0.5,0.84])
-            groupra[sel] = racen # in degrees
-            groupdec[sel] = deccen # in degrees
-            groupz[sel] = z50
-            groupz16[sel] = z16
-            groupz84[sel] = z84
-            if return_z_pdfs:
-                z_pdfs[i] = pdf
-    pdfoutput = ({'zmesh':zmesh, 'pdf':z_pdfs, 'grpid':uniqidnumbers} if return_z_pdfs else None)
-    return groupra, groupdec, groupz, groupz16, groupz84, pdfoutput
-
-#@deprecated
-def __depr_prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, return_z_pdfs=False):
-    """
-    -----
-    Obtain a list of group centers (RA/Dec/z) given a list of galaxy coordinates (equatorial)
-    and their corresponding group ID numbers. This is based on Hutchens+2024 (paper 3) and incorporates
-    the photometric redshift errors when determining group centers.
-    
-    Inputs (all same length)
-       galaxyra : 1D iterable,  list of galaxy RA values in decimal degrees
-       galaxydec : 1D iterable, list of galaxy dec values in decimal degrees
-       galaxyz : 1D iterable, list of galaxy z values in redshift units (NOT km/s)
-       galaxyzerr : 1D iterable, list of galaxy z 
-       galaxygrpid : 1D iterable, group ID number for every galaxy in previous arguments.
-       return_z_pdfs: True/False (default False), dictates whether group z PDFs are returned.
-    
-    Outputs (all shape match `galaxyra`)
-       groupra : RA in decimal degrees of galaxy i's group center.
-       groupdec : Declination in decimal degrees of galaxy i's group center.
-       groupz : Redshift of galaxy i's group center.
-       groupz16 : 16th percentile of galaxy i's group redshift distribution.
-       groupz84 : 84th percentile of galaxy i's group redshift distribution.
-       pdfoutput: If return_z_pdfs is True, this will be returned as a dictionary
-                   with keys 'zmesh', 'pdf', and 'grpid'. Otherwise `None` is returned.
-    -----
-    """
-    assert len(galaxyzerr)==len(galaxyz)
-    # Prepare cartesian coordinates of input galaxies
-    ngalaxies = len(galaxyra)
-    galaxyphi = galaxyra * np.pi/180.
-    galaxytheta = np.pi/2. - galaxydec*np.pi/180.
-    galaxyxx = (np.expand_dims((np.sin(galaxytheta)*np.cos(galaxyphi)),axis=1)).astype(np.float32) # equivalent to [:,np.newaxis]
-    galaxyyy = (np.expand_dims((np.sin(galaxytheta)*np.sin(galaxyphi)),axis=1)).astype(np.float32)
-    galaxyzz = (np.expand_dims(((np.cos(galaxytheta))),axis=1)).astype(np.float32)
-    # Prepare output arrays
-    uniqidnumbers = np.unique(galaxygrpid).astype(np.int32)
-    groupra = np.zeros(ngalaxies, dtype=np.float32)
-    groupdec = np.zeros(ngalaxies, dtype=np.float32)
-    groupz = np.zeros(ngalaxies, dtype=np.float32)
-    groupz16 = np.zeros(ngalaxies, dtype=np.float32)
-    groupz84 = np.zeros(ngalaxies, dtype=np.float32)
-    cspeed=SPEED_OF_LIGHT
-    galaxyz = np.expand_dims(galaxyz,axis=1)
-    galaxyzerr = np.expand_dims(galaxyzerr,axis=1) 
     for i,uid in enumerate(uniqidnumbers):
         sel=np.where(galaxygrpid==uid)
         if len(sel[0])==1:
@@ -756,39 +680,28 @@ def __depr_prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxy
             gxdist=np.sum(gauss_vectorized(xmesh, gx, np.abs(gxerr)),axis=0)
             gydist=np.sum(gauss_vectorized(ymesh, gy, np.abs(gyerr)),axis=0)
             gzdist=np.sum(gauss_vectorized(zmesh, gz, np.abs(gzerr)),axis=0)
-            normx = np.sum(gxdist*(xmesh[1]-xmesh[0]))
-            normy = np.sum(gydist*(ymesh[1]-ymesh[0]))
-            normz = np.sum(gzdist*(zmesh[1]-zmesh[0]))
-            gxdist /= normx
-            gydist /= normy
-            gzdist /= normz
-            # jointly sample the 3D distribution of X, Y, and Z
-            gx_ind = np.random.choice(len(xmesh), size=int(1e4), p=gxdist/np.sum(gxdist))
-            gy_ind = np.random.choice(len(ymesh), size=int(1e4), p=gydist/np.sum(gydist))
-            gz_ind = np.random.choice(len(zmesh), size=int(1e4), p=gzdist/np.sum(gzdist))
-            gx_sample = xmesh[gx_ind]
-            gy_sample = ymesh[gy_ind]
-            gz_sample = zmesh[gz_ind]
-            redshift_cen_sample = np.sqrt(gx_sample*gx_sample + gy_sample*gy_sample + gz_sample*gz_sample)
-            # use samples to find most likely centers
-            redshiftcen = np.median(redshift_cen_sample)
-            redshift16 = np.percentile(redshift_cen_sample, 16)
-            redshift84 = np.percentile(redshift_cen_sample, 84)
-            deccen = np.median(np.degrees(np.arcsin(gz_sample / redshift_cen_sample))) # np.median(galaxydec[sel])
-            racen = np.median(np.degrees(np.arctan2(gy_sample,gx_sample)))
+            gx_mean = np.sum(xmesh * gxdist) / np.sum(gxdist) 
+            gy_mean = np.sum(ymesh * gydist) / np.sum(gydist)
+            gz_mean = np.sum(zmesh * gzdist) / np.sum(gzdist)
+            gx_16 = np.percentile(xmesh,  q=16)#, method='inverted_cdf')# weights=gxdist,
+            gy_16 = np.percentile(ymesh,  q=16)#, method='inverted_cdf')# weights=gydist,
+            gz_16 = np.percentile(zmesh,  q=16)#, method='inverted_cdf')# weights=gzdist,
+            gx_84 = np.percentile(xmesh,  q=84)#, method='inverted_cdf')# weights=gxdist,
+            gy_84 = np.percentile(ymesh,  q=84)#, method='inverted_cdf')# weights=gydist,
+            gz_84 = np.percentile(zmesh,  q=84)#, method='inverted_cdf')# weights=gzdist,
+            redshiftcen = np.sqrt(gx_mean*gx_mean + gy_mean*gy_mean + gz_mean*gz_mean)
+            redshift16 = np.sqrt(gx_16*gx_16 + gy_16*gy_16 + gz_16*gz_16)
+            redshift84 = np.sqrt(gx_84*gx_84 + gy_84*gy_84 + gz_84*gz_84)
+            deccen = np.degrees(np.arcsin(gz_mean / redshiftcen))
+            racen = np.degrees(np.arctan2(gy_mean, gx_mean))
             racen = np.where(racen<0, racen+360, racen)
             groupra[sel] = racen # in degrees
             groupdec[sel] = deccen # in degrees
             groupz[sel] = redshiftcen
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
-            #if ((racen>np.max(galaxyra[sel])) or (racen<np.min(galaxyra[sel]))):
-            #    print(uid, racen, galaxyra[sel])
-            #nmembers=len(sel[0])
-            #xcentest = np.sum(galaxyz[sel]*galaxyxx[sel])/nmembers
-            #ycentest=np.sum(galaxyz[sel]*galaxyyy[sel])/nmembers
-            #print('h23 ra_cen: ', np.degrees(np.arctan2(ycentest,xcentest)))
-            #print('------')
+            if redshift16 > redshiftcen:
+                print(3e5*redshift16, 3e5*redshiftcen, 3e5*redshift84)
     if return_z_pdfs:
         zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
         z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
@@ -940,7 +853,9 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     seed1sel = (combinedgalgrpid==uniqIDnums[0])
     seed2sel = (combinedgalgrpid==uniqIDnums[1])
     seed1grpra,seed1grpdec,seed1grpz,_,_,seed1pdf = prob_group_skycoords(combinedra[seed1sel],combineddec[seed1sel],combinedz[seed1sel], combinedzerr[seed1sel] ,combinedgalgrpid[seed1sel],True)
+    if uniqIDnums[0]==1893: print('in prob_giants_fit_in_group (seed1grpra) ---> ', seed1grpra)
     seed2grpra,seed2grpdec,seed2grpz,_,_,seed2pdf = prob_group_skycoords(combinedra[seed2sel],combineddec[seed2sel],combinedz[seed2sel], combinedzerr[seed2sel] ,combinedgalgrpid[seed2sel],True)
+    if uniqIDnums[1]==1893: print('in prob_giants_fit_in_group (seed2grpra) ---> ', seed2grpra)
     allgrpra,allgrpdec,allgrpz,_,_,_ = prob_group_skycoords(combinedra, combineddec, combinedz, combinedzerr, np.zeros(len(combinedra)), False)
     totalgrpN = len(seed1grpra)+len(seed2grpra)
 
@@ -971,7 +886,7 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
 #######################################################################
 ## Dwarf galaxy association code
 
-def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, grpzerr, grpzpdf, grpid, radius_boundary, velocity_boundary, Pth, H0=100., Om0=0.3, Ode0=0.7):
+def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, grpzpdf, grpid, radius_boundary, velocity_boundary, Pth, H0=100., Om0=0.3, Ode0=0.7):
     """
     Associate galaxies to a group catalog based on given radius and velocity boundaries, based on a method
     similar to that presented in Eckert+ 2016. As used in Hutchens+2023 
@@ -992,8 +907,6 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
         Declination of group centers in degrees. Length matches `grpra`.
     grpz : iterable
         Redshift of group center.  Length matches `grpra`.
-    grpzerr : iterable
-        Redshift uncertainty on group center.
     grpzpdf : dict
         zpdfs for giant-only groups
     grpid : iterable
@@ -1023,7 +936,6 @@ def prob_faint_assoc(faintra, faintdec, faintz, faintzerr, grpra, grpdec, grpz, 
     grpra = grpra[uniqind]
     grpdec = grpdec[uniqind]
     grpz = grpz[uniqind]
-    grpzerr = grpzerr[uniqind]
     velocity_boundary=velocity_boundary[uniqind]
     radius_boundary=radius_boundary[uniqind]
     zrange = (1+grpz) * velocity_boundary/SPEED_OF_LIGHT
@@ -1775,6 +1687,12 @@ if __name__=='__main__':
     pg3grp=pg3ob.find_groups()[0]
     eco.loc[:,'pg3grp'] = pg3grp
     print('elapsed time was ', time.time()-t1)
+
+
+    #grpra, grpdec, grpz, _, _, _ = prob_group_skycoords(eco.radeg, eco.dedeg, eco.cz/3e5, eco.czerr/3e5, eco.pg3grp, False)
+    #eco.loc[:'pg3grpra'] = grpra
+    #eco.loc[:'pg3grpdec'] = grpdec
+    #eco.loc[:'pg3grpcz'] = grpz*3e5
 
     bins = np.arange(0.5,300.5,1)
     plt.figure()
