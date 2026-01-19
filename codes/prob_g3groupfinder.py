@@ -1,6 +1,6 @@
 import math
 import matplotlib
-#matplotlib.use('TkAgg')
+matplotlib.use('TkAgg')
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import numpy as np
@@ -144,8 +144,8 @@ class pg3(object):
             self.czerr = self.czerr*SPEED_OF_LIGHT
         if (czerr/SPEED_OF_LIGHT > 1).any():
             print(f"WARNING: {np.sum((czerr/SPEED_OF_LIGHT)>1)} input galaxies have redshift uncertainty >1. This may raise memory consumption significantly.")
-        if (self.czerr<10).any():
-            print(f"WARNING: {np.sum(self.czerr<10)} redshift uncertainties are <10 km/s equivalent. This code samples at 10 km/s resolution.")
+        if (self.czerr<5).any():
+            print(f"WARNING: {np.sum(self.czerr<5)} redshift uncertainties are <5 km/s equivalent. This code samples at 5 km/s resolution.")
         self.g3grpid = np.zeros_like(radeg)-99.
         self.g3ssid = np.zeros_like(radeg)-99.
         self.H0 = H0
@@ -699,7 +699,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
     if return_z_pdfs:
-        zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
+        zmesh = np.arange(0, np.max(galaxyz)+0.1, 5/cspeed, dtype=np.float32)
         z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
         for i,uid in enumerate(uniqidnumbers):
             sel=(galaxygrpid==uid)
@@ -1670,7 +1670,7 @@ if __name__=='__main__':
     omega_de = 0.7
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
-    pdfname = 'eco.pdf'
+    pdfname = None#'eco.pdf'
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':pdfname,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
