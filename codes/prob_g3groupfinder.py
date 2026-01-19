@@ -683,15 +683,13 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             gx_mean = np.sum(xmesh * gxdist) / np.sum(gxdist) 
             gy_mean = np.sum(ymesh * gydist) / np.sum(gydist)
             gz_mean = np.sum(zmesh * gzdist) / np.sum(gzdist)
-            gx_16 = np.percentile(xmesh,  q=16)#, method='inverted_cdf')# weights=gxdist,
-            gy_16 = np.percentile(ymesh,  q=16)#, method='inverted_cdf')# weights=gydist,
-            gz_16 = np.percentile(zmesh,  q=16)#, method='inverted_cdf')# weights=gzdist,
-            gx_84 = np.percentile(xmesh,  q=84)#, method='inverted_cdf')# weights=gxdist,
-            gy_84 = np.percentile(ymesh,  q=84)#, method='inverted_cdf')# weights=gydist,
-            gz_84 = np.percentile(zmesh,  q=84)#, method='inverted_cdf')# weights=gzdist,
+            gx_var = np.sum(gxdist * (xmesh - gx_mean)**2) / np.sum(gxdist)
+            gy_var = np.sum(gydist * (ymesh - gy_mean)**2) / np.sum(gydist)
+            gz_var = np.sum(gzdist * (zmesh - gz_mean)**2) / np.sum(gzdist)
             redshiftcen = np.sqrt(gx_mean*gx_mean + gy_mean*gy_mean + gz_mean*gz_mean)
-            redshift16 = np.sqrt(gx_16*gx_16 + gy_16*gy_16 + gz_16*gz_16)
-            redshift84 = np.sqrt(gx_84*gx_84 + gy_84*gy_84 + gz_84*gz_84)
+            redshiftstd = np.sqrt(gx_var + gy_var + gz_var)
+            redshift16 = redshiftcen-redshiftstd
+            redshift84 = redshiftcen+redshiftstd
             deccen = np.degrees(np.arcsin(gz_mean / redshiftcen))
             racen = np.degrees(np.arctan2(gy_mean, gx_mean))
             racen = np.where(racen<0, racen+360, racen)
@@ -700,8 +698,6 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
             groupz[sel] = redshiftcen
             groupz16[sel] = redshift16
             groupz84[sel] = redshift84
-            if redshift16 > redshiftcen:
-                print(3e5*redshift16, 3e5*redshiftcen, 3e5*redshift84)
     if return_z_pdfs:
         zmesh = np.arange(0, np.max(galaxyz)+0.1, 10/cspeed, dtype=np.float32)
         z_pdfs = np.zeros((len(uniqidnumbers), len(zmesh)), dtype=np.float32)
@@ -853,9 +849,7 @@ def prob_giants_fit_in_group(combinedra, combineddec, combinedz, combinedzerr, c
     seed1sel = (combinedgalgrpid==uniqIDnums[0])
     seed2sel = (combinedgalgrpid==uniqIDnums[1])
     seed1grpra,seed1grpdec,seed1grpz,_,_,seed1pdf = prob_group_skycoords(combinedra[seed1sel],combineddec[seed1sel],combinedz[seed1sel], combinedzerr[seed1sel] ,combinedgalgrpid[seed1sel],True)
-    if uniqIDnums[0]==1893: print('in prob_giants_fit_in_group (seed1grpra) ---> ', seed1grpra)
     seed2grpra,seed2grpdec,seed2grpz,_,_,seed2pdf = prob_group_skycoords(combinedra[seed2sel],combineddec[seed2sel],combinedz[seed2sel], combinedzerr[seed2sel] ,combinedgalgrpid[seed2sel],True)
-    if uniqIDnums[1]==1893: print('in prob_giants_fit_in_group (seed2grpra) ---> ', seed2grpra)
     allgrpra,allgrpdec,allgrpz,_,_,_ = prob_group_skycoords(combinedra, combineddec, combinedz, combinedzerr, np.zeros(len(combinedra)), False)
     totalgrpN = len(seed1grpra)+len(seed2grpra)
 
@@ -1488,7 +1482,7 @@ def LADUMA_FWQM(zz):
     LADUMA z ranges, -999 is returned.
    
     Frequency -> redshift for SPWs:
-    880-933 MHz --> (0.52240707, 0.6140975)
+    880-933 MHz -> (0.52240707, 0.6140975)
     960-1159 MHz -> (0.22519413, 0.479589375)
     1304-1420 MHz >  (0.0002858, 0.0892683)
  
@@ -1676,7 +1670,7 @@ if __name__=='__main__':
     omega_de = 0.7
     cosmo=LambdaCDM(hubble_const, omega_m, omega_de)
     ecovolume = 191958.08 / (hubble_const/100.)**3.
-    pdfname = None#'eco.pdf'
+    pdfname = 'eco.pdf'
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':pdfname,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
@@ -1694,15 +1688,15 @@ if __name__=='__main__':
     #eco.loc[:'pg3grpdec'] = grpdec
     #eco.loc[:'pg3grpcz'] = grpz*3e5
 
-    bins = np.arange(0.5,300.5,1)
-    plt.figure()
-    plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
-    plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
-    plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
-    ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
-    plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3 Dwarf-Only Groups')
-    plt.yscale('log')
-    plt.xlabel(r"Group $N_{\rm galaxies}$")
-    plt.xlim(0,50)
-    plt.legend(loc='best')
-    plt.show()
+    #bins = np.arange(0.5,300.5,1)
+    #plt.figure()
+    #plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
+    #plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
+    #plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
+    #ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
+    #plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3 Dwarf-Only Groups')
+    #plt.yscale('log')
+    #plt.xlabel(r"Group $N_{\rm galaxies}$")
+    #plt.xlim(0,50)
+    #plt.legend(loc='best')
+    #plt.show()
