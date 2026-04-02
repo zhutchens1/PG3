@@ -433,13 +433,17 @@ class pg3(object):
 #################################################
 
 def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
+    sqrt_2pi = 2.506628274631
     dz = zmesh[1]-zmesh[0]
     zmesh = zmesh[None, :]
-    g1pdf = np.exp(-0.5 * ((zmesh - z1[:, None]) / sig1[:, None])**2) / (sig1[:, None] * np.sqrt(2 * np.pi))
+    z1_minus_zmesh_norm = (z1[:,None] - zmesh)/sig1[:,None]
+    z2_minus_zmesh = z2[:, None] - zmesh
+    g1pdf = np.exp(-0.5 * z1_minus_zmesh_norm * z1_minus_zmesh_norm) / (sig1[:, None] * sqrt_2pi)
     den = 1.4142 * sig2[:, None]
-    erf_term = sc.erf((z2[:, None] - zmesh + VL_lower[:, None]) / den) - sc.erf((z2[:, None] - zmesh - VL_upper[:, None]) / den)
+    erf_term = sc.erf((z2_minus_zmesh + VL_lower[:, None]) / den) - sc.erf((z2_minus_zmesh - VL_upper[:, None]) / den)
     #P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
-    P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
+    #P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
+    P12 = 0.5 * dz * np.einsum('ij,ij->i', g1pdf, erf_term)
     return P12
 
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True):
@@ -494,6 +498,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
     column_transv_cmvgdist = transv_cmvgdist[:, None]
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc
+    del half_angle, column_transv_cmvgdist, transv_cmvgdist, los_cmvgdist, phi, theta, ra, dec
 
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
