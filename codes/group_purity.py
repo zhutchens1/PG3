@@ -48,7 +48,7 @@ def get_metrics_by_group(groupid, haloid, galproperty, enforce_positive_IDs=Fals
     purity=np.full(ngal,-999.)
     unique_groups = np.unique(groupid)
 
-    if (galproperty>-30).all() and (galproperty<-12).all():
+    if (galproperty>-30).all() and (galproperty<-1).all():
         central_selection = np.min # minimum mag is brightest galaxy=central
         sortfactor=1
     elif (galproperty>0).all():
@@ -119,7 +119,7 @@ def get_metrics_by_halo(groupid, haloid, galproperty):
     purity=np.full(ngal,-999.)
     unique_halos = np.unique(haloid)
 
-    if (galproperty>-30).all() and (galproperty<-12).all():
+    if (galproperty>-30).all() and (galproperty<-1).all():
         central_selection = np.min # minimum mag is brightest galaxy=central
         sortfactor=1
     elif (galproperty>0).all():
@@ -142,36 +142,132 @@ def get_metrics_by_halo(groupid, haloid, galproperty):
             completeness[halosel]=N_s/N_h
     return purity, completeness
 
+# ---------------------------------------------------- #
+# ---------------------------------------------------- #
+# Functions for ref-test mappings (PG3 paper)
+
+def PC_test_to_ref(test_group_id, test_group_refid, galproperty, uniq_ref_group_id, ref_grpn):
+    """
+    Calculate purity and completeness of test groups relative to reference groups,
+    based on the methodology of Hutchens+2026 (PG3).
+
+    Parameters
+    --------------
+    test_group_id : array
+        Test group identifier for each galaxy in the test group catalog.
+    test_group_refid : array
+        Reference group identifier for each galaxy in the test group catalog.
+    galproperty : array
+        Mass or absolute magnitude for each galaxy in the test group catalog.
+    uniq_ref_group_id : array
+        Array of unique reference group identifiers.
+    ref_grpn : array
+        Array of group N values for reference groups. Length matches uniq_ref_group_id.
+
+    Returns
+    --------------
+    purity, completeness : array
+        Purity and completeness of test groups (see H26 definitions).
+        -999 in cases where there is no matched reference group.
+        Length matches uniq_test_group_id below.
+    uniq_test_group_id : array
+        Unique identifiers of test groups.
+    uniq_test_grpn : array
+        Galaxy counts for each unique test group.
+    """
+    test_group_id = np.array(test_group_id)
+    test_group_refid = np.array(test_group_refid)
+    galproperty = np.array(galproperty)
+    uniq_ref_group_id = np.array(uniq_ref_group_id)
+    ref_grpn = np.array(ref_grpn)
+    assert len(uniq_ref_group_id)==len(ref_grpn)
+
+    if (galproperty>-30).all() and (galproperty<-1).all():
+        central_selection = np.min # minimum mag is brightest galaxy=central
+        sortfactor=1
+    elif (galproperty>0).all():
+        central_selection = np.max # maximum mass is central
+        sortfactor=-1
+    
+    uniq_test_group_id, uniq_test_grpn = np.unique(test_group_id, return_counts=True)
+    purity = np.zeros(len(uniq_test_group_id))
+    completeness = np.zeros(len(uniq_test_group_id))
+    for ii,Tid in enumerate(uniq_test_group_id):
+        testgroupsel = (test_group_id == Tid)
+        refIDs = test_group_refid[testgroupsel]
+        if (refIDs < 0).all():
+            purity[ii] = -999.
+            completeness[ii] = -999.
+        else:
+            sortidx = np.argsort(sortfactor*galproperty[testgroupsel])
+            take_mode_of = refIDs[sortidx]
+            take_mode_of = take_mode_of[take_mode_of>0] # ignore -999.
+            mapped_refID = mode(take_mode_of,keepdims=True)[0][0]
+            Ntest = np.sum(testgroupsel)
+            Nref = ref_grpn[uniq_ref_group_id == mapped_refID]
+            Ns = np.sum(test_group_refid[testgroupsel]==mapped_refID)
+            purity[ii] = Ns/Ntest
+            completeness[ii] = Ns/Nref
+    return purity, completeness, uniq_test_group_id, uniq_test_grpn
+
+def PC_ref_to_test(test_group_id, test_group_refid, galproperty, uniq_ref_group_id, ref_grpn):
+    test_group_id = np.array(test_group_id)
+    test_group_refid = np.array(test_group_refid)
+    galproperty = np.array(galproperty)
+    uniq_ref_group_id = np.array(uniq_ref_group_id)
+    ref_grpn = np.array(ref_grpn)
+    assert len(uniq_ref_group_id)==len(ref_grpn)
+
+    # do I need to assign galproperty for reference galaxies in this case??
+
+
+    if (galproperty>-30).all() and (galproperty<-1).all():
+        central_selection = np.min # minimum mag is brightest galaxy=central
+        sortfactor=1
+    elif (galproperty>0).all():
+        central_selection = np.max # maximum mass is central
+        sortfactor=-1
+    
+ass
+            
 if __name__=='__main__':
     import pandas as pd
-    data = pd.read_hdf("./halobiasmocks/fiducial/ECO_cat_0_Planck_memb_cat.hdf5")
-    pur,comp=get_metrics_by_halo(data.groupid, data.haloid, data.M_r)
-    data['pur']=pur
-    data['comp']=comp
-
-    import matplotlib
-    matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
-    data=data[data.g_galtype==1]
-    fig,axs = plt.subplots(ncols=2, sharey=True)
-    axs[0].scatter(data.M_group, data.pur, s=2, alpha=0.9)
-    axs[0].set_xlabel("FoF+HAM Mass")
-    axs[0].set_ylabel("group purity")
-    axs[1].hist(data.pur, log=True, histtype='step', bins=np.arange(0,1.05,0.05), orientation='horizontal')
-    axs[1].axhline(np.mean(data.pur), label='Mean', color='red')
-    axs[1].axhline(np.median(data.pur), label='Median', color='purple')
-    axs[1].legend(loc='best')
+    data = pd.read_hdf("/srv/one/zhutchen/g3groupfinder/halobiasmocks/fiducial/ECO_cat_0_Planck_memb_cat.hdf5")
+    haloid, halon = np.unique(data.haloid, return_counts=True)
+    pp,cc,_,_ = PC_test_to_ref(data.groupid, data.haloid, data.M_r, haloid, halon)
+    plt.figure()
+    plt.plot(pp, cc, 'k.')
+    plt.xlabel('pur')
+    plt.ylabel('compl')
     plt.show()
-    
+    #pur,comp=get_metrics_by_halo(data.groupid, data.haloid, data.M_r)
+    #data['pur']=pur
+    #data['comp']=comp
 
-    fig,axs = plt.subplots(ncols=2, sharey=True)
-    axs[0].scatter(data.M_group, data.comp, s=2, alpha=0.9)
-    axs[0].set_xlabel("FoF+HAM Mass")
-    axs[0].set_ylabel("group completeness")
-    axs[1].hist(data.comp, log=True, histtype='step', bins=np.arange(0,1.05,0.05), orientation='horizontal')
-    axs[1].axhline(np.mean(data.comp), label='Mean', color='red')
-    axs[1].axhline(np.median(data.comp), label='Median', color='purple')
-    axs[1].legend(loc='best')
-    plt.show()
-    print(data[['pur','comp']].mean())
-    print(data[['pur','comp']].median())
+    #import matplotlib
+    #matplotlib.use('TkAgg')
+    #import matplotlib.pyplot as plt
+    #data=data[data.g_galtype==1]
+    #fig,axs = plt.subplots(ncols=2, sharey=True)
+    #axs[0].scatter(data.M_group, data.pur, s=2, alpha=0.9)
+    #axs[0].set_xlabel("FoF+HAM Mass")
+    #axs[0].set_ylabel("group purity")
+    #axs[1].hist(data.pur, log=True, histtype='step', bins=np.arange(0,1.05,0.05), orientation='horizontal')
+    #axs[1].axhline(np.mean(data.pur), label='Mean', color='red')
+    #axs[1].axhline(np.median(data.pur), label='Median', color='purple')
+    #axs[1].legend(loc='best')
+    #plt.show()
+    #
+
+    #fig,axs = plt.subplots(ncols=2, sharey=True)
+    #axs[0].scatter(data.M_group, data.comp, s=2, alpha=0.9)
+    #axs[0].set_xlabel("FoF+HAM Mass")
+    #axs[0].set_ylabel("group completeness")
+    #axs[1].hist(data.comp, log=True, histtype='step', bins=np.arange(0,1.05,0.05), orientation='horizontal')
+    #axs[1].axhline(np.mean(data.comp), label='Mean', color='red')
+    #axs[1].axhline(np.median(data.comp), label='Median', color='purple')
+    #axs[1].legend(loc='best')
+    #plt.show()
+    #print(data[['pur','comp']].mean())
+    #print(data[['pur','comp']].median())
