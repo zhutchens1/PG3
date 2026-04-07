@@ -433,17 +433,42 @@ class pg3(object):
 #################################################
 
 def numeric_integration_pfof_vectorized(zmesh, z1, sig1, z2, sig2, VL_lower, VL_upper):
+    # commented out code is extremely mem-intense, rewritten version saves significant memory ~180gb
+    #sqrt_2pi = 2.506628274631
+    #dz = zmesh[1]-zmesh[0]
+    #zmesh = zmesh[None, :]
+    #z1_minus_zmesh_norm = (z1[:,None] - zmesh)/sig1[:,None]
+    #z2_minus_zmesh = z2[:, None] - zmesh
+    #g1pdf = np.exp(-0.5 * z1_minus_zmesh_norm * z1_minus_zmesh_norm) / (sig1[:, None] * sqrt_2pi)
+    #den = 1.4142 * sig2[:, None]
+    #erf_term = sc.erf((z2_minus_zmesh + VL_lower[:, None]) / den) - sc.erf((z2_minus_zmesh - VL_upper[:, None]) / den)
+    ##P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
+    ##P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
+    #P12 = 0.5 * dz * np.einsum('ij,ij->i', g1pdf, erf_term)
+    #return P12
     sqrt_2pi = 2.506628274631
-    dz = zmesh[1]-zmesh[0]
-    zmesh = zmesh[None, :]
-    z1_minus_zmesh_norm = (z1[:,None] - zmesh)/sig1[:,None]
-    z2_minus_zmesh = z2[:, None] - zmesh
-    g1pdf = np.exp(-0.5 * z1_minus_zmesh_norm * z1_minus_zmesh_norm) / (sig1[:, None] * sqrt_2pi)
-    den = 1.4142 * sig2[:, None]
-    erf_term = sc.erf((z2_minus_zmesh + VL_lower[:, None]) / den) - sc.erf((z2_minus_zmesh - VL_upper[:, None]) / den)
-    #P12 = np.trapezoid(0.5 * g1pdf * erf_term, zmesh, axis=1)
-    #P12 = np.sum(0.5*g1pdf*erf_term*dz,axis=1)
-    P12 = 0.5 * dz * np.einsum('ij,ij->i', g1pdf, erf_term)
+    sqrt2 = 1.41421356237
+    dz = zmesh[1] - zmesh[0]
+    inv_sig1 = 1.0 / sig1
+    inv_den2 = 1.0 / (sqrt2 * sig2)
+    # (z1-zmesh)/sig1
+    tmp1 = z1[:, None] - zmesh
+    tmp1 *= inv_sig1[:, None]
+    # g1pdf = exp(-0.5 * tmp1^2) / (sig1 * sqrt(2π))
+    np.square(tmp1, out=tmp1)
+    tmp1 *= -0.5
+    np.exp(tmp1, out=tmp1)
+    tmp1 *= inv_sig1[:, None] / sqrt_2pi
+    g1pdf = tmp1  # rename for clarity
+    z2mz = z2[:, None] - zmesh
+    # argument buffers
+    arg_hi = (z2mz + VL_lower[:, None]) * inv_den2[:, None]
+    arg_lo = (z2mz - VL_upper[:, None]) * inv_den2[:, None]
+    erf_term = sc.erf(arg_hi)
+    erf_term -= sc.erf(arg_lo)
+    # --- final integration ---
+    # P12 = 0.5 * dz * sum(g1pdf * erf_term, axis=1)
+    P12 = 0.5 * dz * np.einsum("ij,ij->i", g1pdf, erf_term)
     return P12
 
 def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0=0.7, printConf=True):
@@ -494,11 +519,15 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
     del z_arr_interp
 
+    print('here2')
     # Compute on-sky perpendicular distance
-    half_angle = np.arcsin((np.sin((theta[:,None]-theta)/2.0)**2.0 + np.sin(theta[:,None])*np.sin(theta)*np.sin((phi[:,None]-phi)/2.0)**2.0)**0.5)
+    col_theta=theta[:,None]
+    col_phi=phi[:,None]
+    half_angle = np.arcsin((np.sin((col_theta-theta)/2.0)**2.0 + np.sin(col_theta)*np.sin(theta)*np.sin((col_phi-phi)/2.0)**2.0)**0.5)
     column_transv_cmvgdist = transv_cmvgdist[:, None]
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc
-    del half_angle, column_transv_cmvgdist, transv_cmvgdist, los_cmvgdist, phi, theta, ra, dec
+    del half_angle, column_transv_cmvgdist, transv_cmvgdist, los_cmvgdist, phi, theta, ra, dec, col_phi, col_theta
+    print('here3')
 
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
@@ -514,7 +543,12 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
 
     zmin_, zmax_ = np.min(zz)-3*np.max(zzerr),np.max(zz)+3*np.max(zzerr)
     meshZ = np.arange((zmin_ if zmin_>0 else 0), zmax_, np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
+    print(zz_i.shape, zz_j.shape, VL_lower_i.shape, VL_upper_i.shape)
+   
+    print('here4')
+    print(meshZ.size, zz_i.size)
     vals = numeric_integration_pfof_vectorized(meshZ, zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
+    print('here5')
 
     prob_dlos[i_idx, j_idx] = vals
     prob_dlos[j_idx, i_idx] = vals
@@ -1679,29 +1713,29 @@ if __name__=='__main__':
     gfargseco = dict({'volume':ecovolume,'rproj_fit_multiplier':3,'vproj_fit_multiplier':4,'vproj_fit_offset':200,'summary_page_savepath':pdfname,'saveplotspdf':False,
            'gd_rproj_fit_multiplier':2, 'gd_vproj_fit_multiplier':4, 'gd_vproj_fit_offset':100,\
            'gd_fit_bins':np.arange(-24,-19,0.25), 'gd_rproj_fit_guess':[1e-5, 0.4],\
-           'pfof_Pth' : 0.9, \
+           'pfof_Pth' : 0.99, \
            'gd_vproj_fit_guess':[3e-5,4e-1], 'H0':hubble_const, 'Om0':omega_m, 'Ode0':omega_de,  'iterative_giant_only_groups':True})
 
     pg3ob=pg3(eco.radeg, eco.dedeg, eco.cz, eco.czerr, eco.absrmag,-19.5,fof_bperp=0.07,fof_blos=1.1,**gfargseco)
     pg3grp=pg3ob.find_groups()[0]
     eco.loc[:,'pg3grp'] = pg3grp
     print('elapsed time was ', time.time()-t1)
-
+    print('# unique groups: ', len(np.unique(pg3grp)))
 
     #grpra, grpdec, grpz, _, _, _ = prob_group_skycoords(eco.radeg, eco.dedeg, eco.cz/3e5, eco.czerr/3e5, eco.pg3grp, False)
     #eco.loc[:'pg3grpra'] = grpra
     #eco.loc[:'pg3grpdec'] = grpdec
     #eco.loc[:'pg3grpcz'] = grpz*3e5
 
-    #bins = np.arange(0.5,300.5,1)
-    #plt.figure()
-    #plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
-    #plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
-    #plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
-    #ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
-    #plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3 Dwarf-Only Groups')
-    #plt.yscale('log')
-    #plt.xlabel(r"Group $N_{\rm galaxies}$")
-    #plt.xlim(0,50)
-    #plt.legend(loc='best')
-    #plt.show()
+    bins = np.arange(0.5,300.5,1)
+    plt.figure()
+    plt.hist(multiplicity_function(eco.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='gray', histtype='stepfilled', label='G3 Groups', alpha=0.7)
+    plt.hist(pg3ob.get_grpn(return_by_galaxy=False), bins=bins, color='blue', histtype='step', label='PG3 Groups', linewidth=3)
+    plt.hist(pg3ob.get_dwarf_grpn_by_group(), bins=bins, color='blue', histtype='stepfilled', alpha=0.3, label='PG3 Dwarf-only Groups', linewidth=3)
+    ecodwarfonly = eco.groupby('g3grp_l').filter(lambda g: (g.absrmag>-19.5).all())
+    plt.hist(multiplicity_function(ecodwarfonly.g3grp_l.to_numpy(), return_by_galaxy=False), bins=bins, color='k', histtype='step', label='G3 Dwarf-Only Groups')
+    plt.yscale('log')
+    plt.xlabel(r"Group $N_{\rm galaxies}$")
+    plt.xlim(0,50)
+    plt.legend(loc='best')
+    plt.show()
