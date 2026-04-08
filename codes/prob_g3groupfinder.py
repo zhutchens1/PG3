@@ -146,7 +146,7 @@ class pg3(object):
             print(f"WARNING: {np.sum((czerr/SPEED_OF_LIGHT)>1)} input galaxies have redshift uncertainty >1. This may raise memory consumption significantly.")
         if (self.czerr<5).any():
             print(f"WARNING: {np.sum(self.czerr<5)} redshift uncertainties are <5 km/s equivalent. This code creates group center PDFs at 5 km/s resolution.")
-            print("Additionally, in parts of code that sample adaptively (PFoF), these tiny uncertainties may cause significant memory consumption or slowdown.")
+            print("Additionally, in parts of this code that sample adaptively (e.g., PFoF), these tiny uncertainties may cause significant memory consumption or slowdown.")
         self.g3grpid = np.zeros_like(radeg)-99.
         self.g3ssid = np.zeros_like(radeg)-99.
         self.H0 = H0
@@ -541,8 +541,7 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     VL_lower_i, VL_upper_i = VL_lower[i_idx], VL_upper[i_idx]
 
     zmin_, zmax_ = np.min(zz)-3*np.max(zzerr),np.max(zz)+3*np.max(zzerr)
-    meshZ = np.arange((zmin_ if zmin_>0 else 0), zmax_, np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
-    print(zz_i.shape, zz_j.shape, VL_lower_i.shape, VL_upper_i.shape)
+    meshZ = np.arange((zmin_ if zmin_>0 else 0), zmax_, np.percentile(zzerr, 1)/3, dtype=np.float32) # resolution adapts to dataset
    
     mesh_length = len(meshZ) # batch over meshZ instead of ngal.
     if mesh_length > 2000:
