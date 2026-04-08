@@ -145,7 +145,8 @@ class pg3(object):
         if (czerr/SPEED_OF_LIGHT > 1).any():
             print(f"WARNING: {np.sum((czerr/SPEED_OF_LIGHT)>1)} input galaxies have redshift uncertainty >1. This may raise memory consumption significantly.")
         if (self.czerr<5).any():
-            print(f"WARNING: {np.sum(self.czerr<5)} redshift uncertainties are <5 km/s equivalent. This code samples at 5 km/s resolution.")
+            print(f"WARNING: {np.sum(self.czerr<5)} redshift uncertainties are <5 km/s equivalent. This code creates group center PDFs at 5 km/s resolution.")
+            print("Additionally, in parts of code that sample adaptively (PFoF), these tiny uncertainties may cause significant memory consumption or slowdown.")
         self.g3grpid = np.zeros_like(radeg)-99.
         self.g3ssid = np.zeros_like(radeg)-99.
         self.H0 = H0
@@ -505,8 +506,8 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     zzerr = np.float32(czerr/c)
     assert (len(ra)==len(dec) and len(dec)==len(cz)),"RA/Dec/cz arrays must equivalent length."
 
-    phi = (ra * np.pi/180.)
-    theta = (np.pi/2. - dec*(np.pi/180.))
+    phi = np.deg2rad(ra)
+    theta = np.pi/2. - np.deg2rad(dec)
     transv_cmvgdist = (cosmo.comoving_transverse_distance(zz).value)
     los_cmvgdist = (cosmo.comoving_distance(zz).value)
     dc_upper = los_cmvgdist + losll
@@ -519,7 +520,6 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     friendship = np.zeros((Ngalaxies, Ngalaxies),dtype=np.int8)
     del z_arr_interp
 
-    print('here2')
     # Compute on-sky perpendicular distance
     col_theta=theta[:,None]
     col_phi=phi[:,None]
@@ -527,7 +527,6 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     column_transv_cmvgdist = transv_cmvgdist[:, None]
     dperp = (column_transv_cmvgdist + transv_cmvgdist) * half_angle # In Mpc
     del half_angle, column_transv_cmvgdist, transv_cmvgdist, los_cmvgdist, phi, theta, ra, dec, col_phi, col_theta
-    print('here3')
 
     # Compute line-of-sight probabilities
     prob_dlos=np.zeros((Ngalaxies, Ngalaxies),dtype=np.float32)
@@ -545,11 +544,15 @@ def pfof_comoving(ra, dec, cz, czerr, perpll, losll, Pth, H0=100., Om0=0.3, Ode0
     meshZ = np.arange((zmin_ if zmin_>0 else 0), zmax_, np.min(zzerr)/3, dtype=np.float32) # resolution adapts to dataset
     print(zz_i.shape, zz_j.shape, VL_lower_i.shape, VL_upper_i.shape)
    
-    print('here4')
-    print(meshZ.size, zz_i.size)
-    vals = numeric_integration_pfof_vectorized(meshZ, zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
-    print('here5')
-
+    mesh_length = len(meshZ) # batch over meshZ instead of ngal.
+    if mesh_length > 2000:
+        vals = np.zeros(len(zz_i), dtype=np.float64)
+        batch_idx = np.array_split(np.arange(mesh_length), int(mesh_length/300))
+        print(f'Large redshift mesh (n={mesh_length}). Running PFoF in batches.')
+        for idx in tqdm(batch_idx):
+            vals += numeric_integration_pfof_vectorized(meshZ[idx], zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
+    else:
+        vals = numeric_integration_pfof_vectorized(meshZ, zz_i, zzerr_i, zz_j, zzerr_j, VL_lower_i, VL_upper_i)
     prob_dlos[i_idx, j_idx] = vals
     prob_dlos[j_idx, i_idx] = vals
 
