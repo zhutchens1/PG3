@@ -4,9 +4,7 @@ import scipy.sparse as sp
 from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
 from scipy.interpolate import interp1d
-from numba import njit, prange, vectorize
-from math import erf
-from pg3tools import prob_group_skycoords
+from pg3tools import *
 
 SPEED_OF_LIGHT = 3.0e5
 sqrt_2pi = 2.506628274631
@@ -167,15 +165,3 @@ def get_pfof_probabilities(zz, zerr, i_idx, j_idx, dperp, perpLL, VL, npoints_pe
         Pij[k] = np.sum(dz * Gi * gz)
     prob[idx_to_integrate] = Pij 
     return prob
-
-@vectorize(['float64(float64)'])
-def erf_vec(x):
-    return erf(x)
-
-if __name__=='__main__':
-    # usage example
-    from astropy.cosmology import Planck18 as planck
-    import pandas as pd
-    ls = pd.read_csv('/srv/two/zhutchen/paper3/data/lsdr9/ls_deg.csv')
-    fofid=kdPFOF(ls.radeg, ls.dedeg, ls.zbest, ls.zbesterr, 0.07*3.5, 1.1*3.5, 0.1, planck, 10)
-    grpra,grpdec,grpz=prob_group_skycoords(ls.radeg, ls.dedeg, ls.zbest, ls.zbesterr, fofid)

@@ -102,13 +102,14 @@ def cartesian_from_spherical_z(ra, dec, redshift):
     ZZ = redshift * np.cos(theta)
     return XX, YY, ZZ
 
-
-
-
+@vectorize(['float64(float64)'])
+def erf_vec(x):
+    return erf(x)
 
 if __name__=='__main__':
     import pandas as pd
     eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
+    eco = eco[(eco.absrmag<=-17.33) & (eco.g3grpcz_l>3000) & (eco.g3grpcz_l<7000)]
     ra, dec, z = prob_group_skycoords(eco.radeg, eco.dedeg, eco.cz/3e5, 0*eco.cz + 50/3e5, eco.g3grp_l, 5)
 
     #import matplotlib.pyplot as plt

@@ -1,15 +1,16 @@
 import numpy as np
 from scipy.spatial import cKDTree
-from copy import deepcopy
-from g3misc import *
+from numba import prange, njit, jit, vectorize
+from pg3tools import *
 SPEED_OF_LIGHT = 3.0e5
+sqrt_2pi = 2.5066282746
 
 #
 # Python code for the giant-only merging subroutine
 # from Hutchens et al. 2023 / 2023ApJ...956...51H
 #
 
-def giantOnlyICRoutine(galaxyra, galaxydec, galaxyz, galaxyzerr, giantfofid, rprojboundary, vprojboundary, cosmo):
+def prob_giantOnlyICRoutine(galaxyra, galaxydec, galaxyz, galaxyzerr, giantfofid, rprojboundary, vprojboundary, Pth, cosmo, n_pts_per_sigma):
     """
     Iteratively combine giant-only FoF groups using group N_giants-based boundaries.
 
@@ -54,14 +55,14 @@ def giantOnlyICRoutine(galaxyra, galaxydec, galaxyz, galaxyzerr, giantfofid, rpr
     while (not converged):
         print(f"Giant-only iterative combination {niter+1} in progress...")
         oldgiantgroupid = giantgroupid
-        giantgroupid = prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,oldgiantgroupid,\
-                        rprojboundary,vprojboundary,cosmo)
+        giantgroupid = prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,\
+                       oldgiantgroupid,rprojboundary,vprojboundary,Pth,cosmo,n_pts_per_sigma)
         converged = np.array_equal(oldgiantgroupid,giantgroupid)
         niter+=1
     print("Giant-only iterative combination complete.")
     return giantgroupid
 
-def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rprojboundary,vprojboundary,cosmo):
+def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rprojboundary,vprojboundary,Pth,cosmo,n_pts_per_sigma):
     """
     Refine input group ID by merging nearest-neighbor groups subject to boundary constraints.
     For info on arguments, see "giantOnlyICRoutine"
@@ -71,27 +72,25 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     refinedgrpid : np.array
         Refined group ID numbers based on nearest-neighbor merging.
     """
-    # Prepare output array
-    groupra, groupdec, groupz = group_skycoords(galaxyra, galaxydec, galaxyz, grpid)
-    gX, gY, gZ = cartesian_from_spherical_z(galaxyra, galaxydec, galaxyz)
+    gauss_norm = 1 / (sqrt_2pi * galaxyzerr)
+    invden2 = -0.5 / (galaxyzerr * galaxyzerr)
 
-    # Get unique potential seed groups, defining a sphere of radius z_min to catch
-    # all possible neighbors regardless of zphot values
     uniqgrpid, uniqind, galaxyidx, seedN = np.unique(grpid, return_index=True, return_inverse=True, return_counts=True)
-    seedra, seeddec, seedz = groupra[uniqind], groupdec[uniqind], groupz[uniqind]
+    gX, gY, gZ = cartesian_from_spherical_z(galaxyra, galaxydec, galaxyz)
+    seedra, seeddec, seedz = prob_group_skycoords(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid)
+    seedra, seeddec, seedz = seedra[uniqind], seeddec[uniqind], seedz[uniqind]
+    seedX, seedY, seedZ = cartesian_from_spherical_z(seedra, seeddec, seedz.min())
     seeddm = cosmo.comoving_transverse_distance(seedz).value
-    zmin = np.zeros_like(seedz) + np.min(seedz)
-    seedX, seedY, seedZ = cartesian_from_spherical_z(seedra, seeddec, zmin)
-    xyz = np.array([seedX, seedY, seedZ]).T
-    kdt = cKDTree(xyz)
-    nndist, nnind = kdt.query(xyz,k=2)
-    nndist=nndist[:,1] # ignore self match
+
+    # identify neighbor pairs
+    seed_xyz_est = np.array([seedX,seedY,seedZ]).T
+    kdt = cKDTree(seed_xyz_est)
+    nndist, nnind = kdt.query(seed_xyz_est,k=2)
+    nndist=nndist[:,1]
     nnind=nnind[:,1]
- 
-    # check whether, supposing the two seed groups were combined into a tentative          <------- stopped here.
-    # larger group, if both seed groups would satisfy the Rproj and Vproj requirements
-    # when calculated from the center of the larger tentative group. In probabilistic 
-    # space, this means checking if 
+
+    # check spatial and LOS requirements for neighboring seed groups
+    # assuming they are merged into a larger tentative ('tent') group
     n_tent = seedN + seedN[nnind]
     G = len(uniqgrpid)
     sumX = np.zeros(G)
@@ -100,11 +99,9 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     np.add.at(sumX, galaxyidx, gX)
     np.add.at(sumY, galaxyidx, gY)
     np.add.at(sumZ, galaxyidx, gZ)
-    tent_Xcen = (sumX + sumX[nnind]) / n_tent
+    tent_Xcen = (sumX + sumX[nnind]) / n_tent # <-- this is a simple average. Weight by 1/sigma2?
     tent_Ycen = (sumY + sumY[nnind]) / n_tent
     tent_Zcen = (sumZ + sumZ[nnind]) / n_tent
-
-
     tent_z = np.sqrt(tent_Xcen*tent_Xcen + tent_Ycen*tent_Ycen + tent_Zcen*tent_Zcen)
     tent_ra = (np.degrees(np.arctan2(tent_Ycen,tent_Xcen))+360.) % 360.0
     tent_dec = np.degrees(np.arcsin(tent_Zcen / tent_z))
@@ -114,15 +111,17 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     alpha_j = angular_separation(seedra[nnind], seeddec[nnind], tent_ra, tent_dec)
     dperp_i = 0.5 * (seeddm + tent_dm) * alpha_i
     dperp_j = 0.5 * (seeddm[nnind] + tent_dm) * alpha_j
-    one_plus_z = (1 + tent_z)
-    vpec_i = SPEED_OF_LIGHT*np.abs(tent_z - seedz) / one_plus_z
-    vpec_j = SPEED_OF_LIGHT*np.abs(tent_z - seedz[nnind]) / one_plus_z 
 
-    seedi_in = (dperp_i < rprojboundary(n_tent)) & (vpec_i < vprojboundary(n_tent))
-    seedj_in = (dperp_j < rprojboundary(n_tent)) & (vpec_j < vprojboundary(n_tent))
-    recip = nnind[nnind] == np.arange(len(nnind)) # are they each other's own nearest neighbor?
-    merge = seedi_in & seedj_in & recip
-  
+    seedi_Rcond = (dperp_i < rprojboundary(n_tent))
+    seedj_Rcond = (dperp_j < rprojboundary(n_tent)) 
+    recip = nnind[nnind] == np.arange(len(nnind))
+    idx_to_integrate = np.where(seedi_Rcond & seedj_Rcond & recip)
+    zavg = 0.5 * (seedz + seedz[nnind])
+    eps = (1 + zavg)/SPEED_OF_LIGHT * vprojboundary(n_tent)
+    print("WARNING: adding dbint_pz_jgauss at line ~158 changed the result; check probabilities from both functions.")
+    prob = integrate_giantOnlyIC(idx_to_integrate[0], galaxyz, galaxyzerr, grpid, gauss_norm, invden2,\
+            uniqgrpid, nnind, seedN, eps, n_pts_per_sigma)
+    merge = (prob > Pth)
     ii=np.where(merge)[0]
     jj=nnind[ii]
     keep = (ii<jj)
@@ -132,3 +131,86 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     uniqgrpid[jj] = revisedid
     refinedgrpid = uniqgrpid[galaxyidx]
     return refinedgrpid
+
+@njit(parallel=True)
+def integrate_giantOnlyIC(idx_to_integrate, galaxyz, galaxyzerr, grpid, gauss_norm, invden2, uniqgrpid, nnind, seedN, eps, n_pts_per_sigma):
+    prob = np.zeros(len(uniqgrpid))
+    for k in prange(len(idx_to_integrate)):
+        ii = idx_to_integrate[k]
+        jj = nnind[ii]
+        grp_ii = uniqgrpid[ii]
+        grp_jj = uniqgrpid[jj]
+        grp_ii_sel = np.where(grpid == grp_ii)
+        grp_jj_sel = np.where(grpid == grp_jj)
+        z_ii = galaxyz[grp_ii_sel]
+        z_jj = galaxyz[grp_jj_sel]
+        zerr_ii = galaxyzerr[grp_ii_sel]
+        zerr_jj = galaxyzerr[grp_jj_sel]
+
+        smallest_zerr = min((zerr_ii.min(), zerr_jj.min()))
+        largest_zerr = max((zerr_ii.max(), zerr_jj.max()))
+        smallest_z = min((z_ii.min(), z_jj.min()))
+        largest_z = max((z_ii.max(), z_jj.max()))
+        dz = smallest_zerr / n_pts_per_sigma
+        zgrid = np.arange(smallest_z - 4*largest_zerr, largest_z + 4*largest_zerr, dz)
+        pz_ii = get_pz_group(zgrid, z_ii, gauss_norm[grp_ii_sel], invden2[grp_ii_sel])
+        if seedN[jj]==1:
+            prob[ii] = dbint_pz_jgauss(zgrid, pz_ii, z_jj, zerr_jj, eps[ii])
+        else:
+            pz_jj = get_pz_group(zgrid, z_jj, gauss_norm[grp_jj_sel], invden2[grp_jj_sel])
+            prob[ii] = dbint_pz_general(zgrid, pz_ii, pz_jj, eps[ii])
+    return prob
+
+@njit
+def get_pz_group(zgrid, zz, norm, invden2): 
+    dz = zgrid.reshape(zgrid.shape[0],1) - zz
+    pz = np.sum(norm * np.exp(invden2 * dz * dz), axis=1)
+    return pz
+
+@njit
+def dbint_pz_general(zgrid, pz1, pz2, eps):
+    cum_D2 = np.zeros(len(zgrid))
+    cum_D2[1:] = np.cumsum((zgrid[1:] + zgrid[:-1]) / 2 * np.diff(zgrid))
+    lower = np.searchsorted(zgrid, zgrid - eps, side='left')
+    upper = np.searchsorted(zgrid, zgrid + eps, side='right')
+    lower = numba_clip(lower, 0, len(zgrid)-1)
+    upper = numba_clip(upper, 0, len(zgrid)-1)
+    f_of_z = cum_D2[upper] - cum_D2[lower]
+    P12 = np.sum(zgrid * f_of_z * (zgrid[1]-zgrid[0]))
+    return P12
+
+@njit
+def dbint_pz_jgauss(zgrid, pz1, z2, zerr2, eps):
+    """ for when p(z|z_j, zerr_j) is Gaussian """
+    den = 1.4142*zerr2
+    erf_term = erf_vec((z2 - zgrid + eps)/den) - erf_vec((z2 - zgrid - eps)/den)
+    P12 = np.sum(0.5 * pz1 * erf_term * (zgrid[1]-zgrid[0]))
+    return P12
+
+@njit
+def numba_clip(arr, a_min, a_max):
+    # This matches the behavior of np.clip(arr, a_min, a_max)
+    return np.minimum(a_max, np.maximum(arr, a_min))
+
+def angular_separation(ra1,dec1,ra2,dec2):
+    """ 
+    Compute the angular separation between two lists of galaxies using the Haversine formula.
+    
+    Parameters
+    ------------
+    ra1, dec1, ra2, dec2 : array-like
+       Lists of right-ascension and declination values for input targets, in decimal degrees. 
+    
+    Returns
+    ------------
+    angle : np.array
+       Array containing the angular separations between coordinates in list #1 and list #2, as above.
+       Return value expressed in radians, NOT decimal degrees.
+    """
+    phi1 = np.deg2rad(ra1)
+    phi2 = np.deg2rad(ra2)
+    theta1 = np.pi/2. - np.deg2rad(dec1)
+    theta2 = np.pi/2. - np.deg2rad(dec2)
+    sin_dt = np.sin((theta2-theta1)/2.0)
+    sin_dp = np.sin((phi2 - phi1)/2.0)
+    return 2*np.arcsin(np.sqrt(sin_dt*sin_dt + np.sin(theta1)*np.sin(theta2) * (sin_dp*sin_dp)))
