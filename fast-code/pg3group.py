@@ -4,16 +4,15 @@ import matplotlib
 import matplotlib.pyplot as plt 
 from scipy.optimize import curve_fit
 from astropy.cosmology import LambdaCDM
-#from kdfof import kdFOF
+
+from pg3tools import *
+from kdpfof import kdPFOF
+from prob_giantonlyic import prob_giantOnlyICRoutine
 #from giantonlyic import giantOnlyICRoutine
 #from dwarfassoc import dwarfAssocRoutine
 #from dwarfonlyic import dwarfOnlyICRoutine
 #from g3misc import *
 
-#import sys
-#sys.path.insert(0,'../g3algo/')
-#import iterativecombination as ic
-#from giantonlyic import iterative_combination_giants
 SPEED_OF_LIGHT = 3e5 # km s-1
 
 class pg3groupfinder:
@@ -50,7 +49,7 @@ class pg3groupfinder:
         self.radeg = precision(radeg)
         self.dedeg = precision(dedeg)
         self.z = precision(z)
-        self.z = precision(zerr)
+        self.zerr = precision(zerr)
         self.absrmag = precision(absrmag)
         self.dwarfgiantdivide = dwarfgiantdivide
         assert (not np.isnan(self.radeg).any()), "RA values must not contain NaNs."
@@ -69,12 +68,14 @@ class pg3groupfinder:
         self.giantsel = (self.absrmag<=self.dwarfgiantdivide)
         self.precision = precision
 
-    def giantOnlyPFOF(self, fof_bperp, fof_blos, fof_sep=None, volume=None):
+    def giantOnlyPFOF(self, Pth, fof_bperp, fof_blos, fof_sep=None, volume=None):
         """
         Construct initial giant-only groups using FoF.
         
         Parameters
         ---------------
+        Pth : float
+            PFoF threshold probability
         fof_bperp : float
             Perpendicular FoF linking length, default 0.07.
         fof_blos : float
@@ -88,6 +89,7 @@ class pg3groupfinder:
             None. This argument is unnecessary if fof_sep is provided. `fof_sep` and `volume`
             cannot both be `None`.
         """
+        self.pfof_Pth = Pth
         self.fof_bperp = fof_bperp
         self.fof_blos = fof_blos
         self.fof_sep = fof_sep
@@ -96,8 +98,11 @@ class pg3groupfinder:
             pass
         else:
             self.fof_sep = (self.volume/np.sum(self.giantsel))**(1/3.)
-        self.giantfofid = kdFOF(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],\
-            self.fof_bperp,self.fof_blos,self.fof_sep,self.cosmo)
+
+        self.lperp = self.fof_bperp * self.fof_sep
+        self.llos = self.fof_blos * self.fof_sep
+        self.giantfofid = kdPFOF(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],self.zerr[self.giantsel],\
+            self.lperp,self.llos,self.pfof_Pth,self.cosmo)
         self.g3grpid[self.giantsel] = self.giantfofid
         self.g3ssid[self.giantsel] = self.giantfofid
         return self.giantfofid
@@ -148,8 +153,8 @@ class pg3groupfinder:
         self.vproj_fit_offset = vproj_fit_offset
 
         if (rproj_fit_params is None) or (vproj_fit_params is None):
-            self.giantgrpra, self.giantgrpdec, self.giantgrpz = group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
-                 self.z[self.giantsel], self.g3grpid[self.giantsel])
+            self.giantgrpra, self.giantgrpdec, self.giantgrpz = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+                 self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel])
             giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
             self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
             grp_ctd = self.cosmo.comoving_transverse_distance(self.giantgrpz).value
@@ -224,14 +229,14 @@ class pg3groupfinder:
         else:
             plt.close()
 
-    def giantOnlyMerging(self):
+    def giantOnlyMerging(self, Pth, n_pts_per_sigma=5):
         """
         Perform giant-only merging (Step 2 of H23) based
         on boundaries calibrated in deriveGiantBoundaries.
 
         """
-        revisedgiantgrpid = giantOnlyICRoutine(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],self.giantfofid,\
-                            self.rproj_boundary, self.vproj_boundary, self.cosmo)
+        revisedgiantgrpid = prob_giantOnlyICRoutine(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],self.zerr[self.giantsel],\
+                            self.giantfofid,self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo, n_pts_per_sigma)
         self.g3grpid[self.giantsel] = revisedgiantgrpid
 
     def dwarfAssoc(self):
@@ -421,32 +426,32 @@ class pg3groupfinder:
 # ------------------------------------------------------------------------------ #
 # ------------------------------------------------------------------------------ #
 # test
-if __name__=='__main__':
-    import pandas as pd
-    df = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
-    df = df[df.absrmag<=-17.33]
-
-    g3 = g3groupfinder(df.radeg, df.dedeg, df.cz/3e5, df.absrmag, -19.5, precision=np.float64)
-    fofid = g3.giantOnlyFOF(0.07, 1.1, 4.84)
-    g3.deriveGiantCalibrations(rproj_fit_multiplier=3, vproj_fit_multiplier=4, vproj_fit_offset=200)
-    #g3.plotGiantGroupBoundaries(show=True)
-    g3.giantOnlyMerging()
-    g3.dwarfAssoc()
-    g3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19,0.25))
-    #g3.plotDwarfBoundaries(show=True, rproj_xlim=(-17,-24), rproj_ylim=(0,0.8), vproj_xlim=(-17,-24), vproj_ylim=(0,800))
-    g3.findDwarfOnlyGroups()
-    #cat = g3.getCatalog(by='galaxy')
-    
-
-    grpn = multiplicity_function(g3.g3grpid, False)
-    dwarfgrpn = multiplicity_function(g3.g3grpid[g3.dwarfonlysel], False)
-    grpn_true = multiplicity_function(df.g3grp_l, False)
-    plt.figure()
-    plt.hist(grpn, bins=np.arange(0.5,400.5,1))
-    plt.hist(dwarfgrpn, bins=np.arange(0.5,400.5,1), histtype='step', color='orange', hatch='//')
-    plt.hist(grpn_true, bins=np.arange(0.5,400.5,1), histtype='step', color='k', label='h23')
-    plt.yscale('log')
-    plt.legend(loc='best')
-    plt.show()
-
-    #exit()
+#if __name__=='__main__':
+#    import pandas as pd
+#    df = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
+#    df = df[df.absrmag<=-17.33]
+#
+#    g3 = g3groupfinder(df.radeg, df.dedeg, df.cz/3e5, df.absrmag, -19.5, precision=np.float64)
+#    fofid = g3.giantOnlyFOF(0.07, 1.1, 4.84)
+#    g3.deriveGiantCalibrations(rproj_fit_multiplier=3, vproj_fit_multiplier=4, vproj_fit_offset=200)
+#    #g3.plotGiantGroupBoundaries(show=True)
+#    g3.giantOnlyMerging()
+#    g3.dwarfAssoc()
+#    g3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19,0.25))
+#    #g3.plotDwarfBoundaries(show=True, rproj_xlim=(-17,-24), rproj_ylim=(0,0.8), vproj_xlim=(-17,-24), vproj_ylim=(0,800))
+#    g3.findDwarfOnlyGroups()
+#    #cat = g3.getCatalog(by='galaxy')
+#    
+#
+#    grpn = multiplicity_function(g3.g3grpid, False)
+#    dwarfgrpn = multiplicity_function(g3.g3grpid[g3.dwarfonlysel], False)
+#    grpn_true = multiplicity_function(df.g3grp_l, False)
+#    plt.figure()
+#    plt.hist(grpn, bins=np.arange(0.5,400.5,1))
+#    plt.hist(dwarfgrpn, bins=np.arange(0.5,400.5,1), histtype='step', color='orange', hatch='//')
+#    plt.hist(grpn_true, bins=np.arange(0.5,400.5,1), histtype='step', color='k', label='h23')
+#    plt.yscale('log')
+#    plt.legend(loc='best')
+#    plt.show()
+#
+#    #exit()
