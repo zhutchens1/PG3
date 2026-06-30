@@ -21,7 +21,7 @@ def compareMultF(id1,id2):
     plt.show()
 
 if __name__=='__main__':
-    pthresh = 0.99
+    pthresh = 0.999
 
     # test match with G3 group algorithm
     eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
@@ -58,7 +58,7 @@ if __name__=='__main__':
 
     g3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19.5,0.5))
     g3.findDwarfOnlyGroups()
-
+    compareMultF(pg3.g3grpid, g3.g3grpid) # result
 
     cat = pg3.getCatalog()
     print(cat)

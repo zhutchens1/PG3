@@ -111,6 +111,10 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
              n_pts_per_sigma)
         assoc_condition = plink > Pth
         assoc_sep = (Rp*Rp)/(radius_boundary[grp_i]*radius_boundary[grp_i])
+
+        check = (plink>1.01)
+        if check.any():
+            print(f"WARNING: at group index {grp_i}, prob_dwarfassoc finds {check.sum()} group pairs with P_ij > 1.0 (max value {plink.max():0.3f}).")
       
         # `associate` is a bool: it is true when Rproj requirement is met (`assoc_condition`) and
         # either (i) the dwarf was never previously associated or (ii) the new giant-only group is a better fit. 

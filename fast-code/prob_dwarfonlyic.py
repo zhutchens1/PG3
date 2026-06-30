@@ -129,8 +129,12 @@ def dwarf_prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,gal
     eps = (1 + zavg)/SPEED_OF_LIGHT * vprojboundary(Mr_tent)
     prob = integrate_IC(idx_to_integrate[0], galaxyz, galaxyzerr, grpid, gauss_norm, invden2,\
             uniqgrpid, nnind, seedN, eps, n_pts_per_sigma)
+
+    check = (prob>1.01)
+    if check.any():
+        print(f"WARNING: prob_dwarfonlyic finds {check.sum()} group pairs with P_ij > 1.0 (max value {prob.max():0.3f}).")
+
     merge = (prob > Pth)
-    
     ii=np.where(merge)[0]
     jj=nnind[ii]
     keep = (ii<jj)

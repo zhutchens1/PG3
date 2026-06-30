@@ -164,10 +164,13 @@ def get_pz_group(zgrid, zz, norm, invden2):
     Returns
     ----------------
     pz : np.array
-        Redshift pdf, unnormalized. Length matches `zgrid`.
+        Redshift pdf, normalized. Length matches `zgrid`.
     """
     dz = zgrid.reshape(zgrid.shape[0],1) - zz
     pz = np.sum(norm * np.exp(invden2 * dz * dz), axis=1)
+    dx = zgrid[1]-zgrid[0]
+    pdfnorm = np.sum(pz * dx)
+    pz /= pdfnorm
     return pz
 
 @njit

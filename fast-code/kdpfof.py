@@ -89,6 +89,10 @@ def kdPFOF(ra, dec, zz, zerr, perpll, losll, Pth, cosmo, npoints_per_std=3):
     assert isinstance(npoints_per_std,int)
     prob = get_pfof_probabilities(zz, zerr, i_idx, j_idx, dperp, perpll, VL, npoints_per_std)
 
+    check = (prob>1.01)
+    if check.any():
+        print(f"WARNING: kdPFOF finds {check.sum()} galaxies with P_ij > 1 (max val = {np.max(prob):0.3f}).")
+
     # Compute outputs
     friendship = (prob >= Pth)
     friendship = sp.coo_array((friendship[friendship], (i_idx[friendship],j_idx[friendship])), shape=(Ngal,Ngal))
