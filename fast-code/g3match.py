@@ -50,8 +50,18 @@ if __name__=='__main__':
     # Dwarf association - again a very good match, subject to kd tree concern (modest).
     pg3.dwarfAssoc(pthresh)
     g3.dwarfAssoc()
-    compareMultF(pg3.g3grpid, g3.g3grpid) # result
+    #compareMultF(pg3.g3grpid, g3.g3grpid) # result
 
+    # dwarf-only groups
+    pg3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19.5,0.5))
+    pg3.findDwarfOnlyGroups(pthresh)
+
+    g3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19.5,0.5))
+    g3.findDwarfOnlyGroups()
+
+
+    cat = pg3.getCatalog()
+    print(cat)
     #grpra,grpdec,grpz=prob_group_skycoords(eco[pg3.giantsel].radeg,eco[pg3.giantsel].dedeg,eco[pg3.giantsel].cz/3e5,zerr[pg3.giantsel],fofid)
     #grpn = multiplicity_function(fofid)
 

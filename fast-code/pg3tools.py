@@ -175,10 +175,33 @@ def get_adaptive_zgrid(z1, z2, e1, e2, npts=5):
     zmax = max([z1.max(),z2.max()])
     emin = min([e1.min(),e2.min()])
     emax = max([e1.max(),e2.max()])
-    dz = emin / 5
+    dz = emin / npts
     buff = 4 * emax
     grid = np.arange(zmin - buff, zmax + buff, dz)
     return grid
+
+@njit(parallel=True)
+def integrate_IC(idx_to_integrate, galaxyz, galaxyzerr, grpid, gauss_norm, invden2, uniqgrpid, nnind, seedN, eps, n_pts_per_sigma):
+    prob = np.zeros(len(uniqgrpid))
+    for k in prange(len(idx_to_integrate)):
+        ii = idx_to_integrate[k]
+        jj = nnind[ii]
+        grp_ii = uniqgrpid[ii]
+        grp_jj = uniqgrpid[jj]
+        grp_ii_sel = np.where(grpid == grp_ii)
+        grp_jj_sel = np.where(grpid == grp_jj)
+        z_ii = galaxyz[grp_ii_sel]
+        z_jj = galaxyz[grp_jj_sel]
+        zerr_ii = galaxyzerr[grp_ii_sel]
+        zerr_jj = galaxyzerr[grp_jj_sel]
+        zgrid = get_adaptive_zgrid(z_ii, z_jj, zerr_ii, zerr_jj, npts=n_pts_per_sigma)
+        pz_ii = get_pz_group(zgrid, z_ii, gauss_norm[grp_ii_sel], invden2[grp_ii_sel])
+        if seedN[jj]==1:
+            prob[ii] = dbint_pz_jgauss(zgrid, pz_ii, z_jj, zerr_jj, eps[ii])
+        else:
+            pz_jj = get_pz_group(zgrid, z_jj, gauss_norm[grp_jj_sel], invden2[grp_jj_sel])
+            prob[ii] = dbint_pz_general(zgrid, pz_ii, pz_jj, eps[ii])
+    return prob
 
 @njit                                                      
 def angular_separation(ra1,dec1,ra2,dec2):
@@ -223,6 +246,46 @@ def multiplicity_function(grpids, return_by_galaxy=False):
         return counts[inv]
     else:
         return counts
+
+def get_int_mag(galmag, grpid):
+    """
+    Given a list of galaxy absolute magnitudes and group ID numbers,
+    compute group-integrated total magnitudes.
+
+    Parameters
+    ------------
+    galmag : iterable
+       List of absolute magnitudes for every galaxy (SDSS r-band).
+    grpid : iterable
+       List of group ID numbers for every galaxy.
+
+    Returns
+    ------------
+    Mint_grp : np array
+       Array containing group-integrated magnitudes for each galaxy. Length matches `galmag`.
+    """
+    galmag=np.asarray(galmag)
+    grpid=np.asarray(grpid)
+    grpmags = np.zeros(len(galmag))
+    uniqgrpid, galaxyidx = np.unique(grpid, return_inverse=True)
+    Ngroups = len(uniqgrpid)
+    # Mint_grp = -2.5 * log10(Sum[10 ^ -0.4M]) for galaxy abs mag M.
+    Mi_terms = np.power(10, -0.4*galmag)
+    sum_terms = np.bincount(galaxyidx, weights=Mi_terms, minlength=Ngroups)
+    Mint_grp = -2.5 * np.log10(sum_terms)
+    return Mint_grp[galaxyidx]
+
+def central_flag(grpid, galproperty):
+    grpid = np.asarray(grpid)
+    galproperty = np.asarray(galproperty)
+    if (galproperty<=0).all():
+        # absolute magnitude
+        galproperty = galproperty * -1
+    elif (galproperty>=0).all():
+        # mass
+        pass
+    else:
+        print(f"Could not determine if `galproperty` is a mass or absolute magnitude.")
 
 # ------------------------------------------------------------------------------ #
 # Misc. supporting functions
@@ -300,27 +363,3 @@ def smoothedbootstrap(data, n_bootstraps, user_statistic, kwargs=None, random_st
 
     # compute the statistic on the data
     return stat_bootstrap
-
-
-#if __name__=='__main__':
-#    import pandas as pd
-#    eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
-#    eco = eco[(eco.absrmag<=-17.33) & (eco.g3grpcz_l>3000) & (eco.g3grpcz_l<7000)]
-#    ra, dec, z = prob_group_skycoords(eco.radeg, eco.dedeg, eco.cz/3e5, 0*eco.cz + 50/3e5, eco.g3grp_l, 5)
-#
-#    #import matplotlib.pyplot as plt
-#    #comasel = (eco.g3grp_l==14)
-#    #plt.figure()
-#    #plt.plot(eco[comasel].radeg, eco[comasel].dedeg, '.', color='gray') 
-#    #plt.plot(eco[comasel].g3grpradeg_l, eco[comasel].g3grpdedeg_l, '.', color='blue')
-#    #plt.plot(ra[comasel], dec[comasel], 'x', color='red')
-#    #plt.show()
-#
-#    #plt.figure()
-#    #plt.plot(eco[comasel].cz, eco[comasel].dedeg, '.', color='gray') 
-#    #plt.plot(eco[comasel].g3grpcz_l, eco[comasel].g3grpdedeg_l, '.', color='blue')
-#    #plt.plot(3e5*z[comasel], dec[comasel], 'x', color='red')
-#    #plt.show()
-#        
-#    
-#    

@@ -16,6 +16,8 @@ if __name__=='__main__':
     pg3.plotGiantGroupBoundaries(show=True)
     pg3.giantOnlyMerging(0.1)
     pg3.dwarfAssoc(0.1)
+    pg3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19.5,0.5))
+    pg3.findDwarfOnlyGroups(0.1)
 
     grpn = multiplicity_function(pg3.g3grpid, False)
     plt.figure()

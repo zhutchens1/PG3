@@ -11,7 +11,7 @@ sqrt_2pi = 2.5066282746
 # from Hutchens et al. 2023 / 2023ApJ...956...51H
 #
 
-def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantdec, giantz, giantzerr, giantgrpid, radius_boundary, velocity_boundary, Pth, cosmo):
+def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantdec, giantz, giantzerr, giantgrpid, radius_boundary, velocity_boundary, Pth, cosmo, n_pts_per_sigma):
     """ 
     Associate galaxies to a group catalog based on given radius and velocity boundaries, based on a method
     similar to that presented in Eckert+ 2016. As used in Hutchens+2023 
@@ -43,6 +43,8 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
         Callable function of group Ngiants.
     cosmo : astropy.cosmology object
         Astropy cosmology to specify cosmological distances.
+    n_pts_per_sigma : int
+        Number of points per standard deviation in redshift grid (for numeric integration).
 
     Returns
     -------
@@ -66,7 +68,7 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
     giantinvden2 = -0.5 / (giantzerr * giantzerr)
 
     uniqgrpid, uniqidx, uniqN = np.unique(giantgrpid, return_index=True, return_counts=True)
-    grpra, grpdec, grpz = prob_group_skycoords(giantra, giantdec, giantz, giantzerr, giantgrpid)
+    grpra, grpdec, grpz = prob_group_skycoords(giantra, giantdec, giantz, giantzerr, giantgrpid, n_pts_per_sigma)
     grpra = grpra[uniqidx]
     grpdec = grpdec[uniqidx]
     grpz = grpz[uniqidx]
@@ -103,7 +105,8 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
 
         plink = np.zeros(len(dwarf_i))
         plink[to_integrate] = get_dwarf_assoc_prob(giantz, giantzerr, giantpznorm, giantinvden2, giantgrpid,\
-             dwarfz[dwarf_i[to_integrate]], dwarfzerr[dwarf_i[to_integrate]], uniqgrpid[grp_i], epsilon[grp_i])
+             dwarfz[dwarf_i[to_integrate]], dwarfzerr[dwarf_i[to_integrate]], uniqgrpid[grp_i], epsilon[grp_i],\
+             n_pts_per_sigma)
         assoc_condition = plink > Pth
         assoc_sep = (Rp*Rp)/(radius_boundary[grp_i]*radius_boundary[grp_i])
       
@@ -120,11 +123,11 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
     return assoc_grpid, assoc_flag
 
 @njit
-def get_dwarf_assoc_prob(giantz, giantzerr, giantpznorm, giantpzinvden2, giantgrpid, dwarfz, dwarfzerr, grpid, eps):
+def get_dwarf_assoc_prob(giantz, giantzerr, giantpznorm, giantpzinvden2, giantgrpid, dwarfz, dwarfzerr, grpid, eps, n_pts_per_sigma):
     giantsel = np.where(giantgrpid == grpid)
     zvals = giantz[giantsel]
     zerrvals = giantzerr[giantsel]
-    zgrid = get_adaptive_zgrid(zvals, zerrvals, dwarfz, dwarfzerr)
+    zgrid = get_adaptive_zgrid(zvals, zerrvals, dwarfz, dwarfzerr, n_pts_per_sigma)
     pz1 = get_pz_group(zgrid, zvals, giantpznorm[giantsel], giantpzinvden2[giantsel])
     passoc = np.zeros_like(dwarfz)
     for k in range(len(passoc)):

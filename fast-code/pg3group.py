@@ -9,6 +9,7 @@ from pg3tools import *
 from kdpfof import kdPFOF
 from prob_giantonlyic import prob_giantOnlyICRoutine
 from prob_dwarfassoc import prob_dwarfAssocRoutine
+from prob_dwarfonlyic import prob_dwarfOnlyICRoutine
 #from giantonlyic import giantOnlyICRoutine
 #from dwarfassoc import dwarfAssocRoutine
 #from dwarfonlyic import dwarfOnlyICRoutine
@@ -69,7 +70,7 @@ class pg3groupfinder:
         self.giantsel = (self.absrmag<=self.dwarfgiantdivide)
         self.precision = precision
 
-    def giantOnlyPFOF(self, Pth, fof_bperp, fof_blos, fof_sep=None, volume=None):
+    def giantOnlyPFOF(self, Pth, fof_bperp, fof_blos, fof_sep=None, volume=None, n_pts_per_sigma=5):
         """
         Construct initial giant-only groups using FoF.
         
@@ -103,13 +104,13 @@ class pg3groupfinder:
         self.lperp = self.fof_bperp * self.fof_sep
         self.llos = self.fof_blos * self.fof_sep
         self.giantfofid = kdPFOF(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],self.zerr[self.giantsel],\
-            self.lperp,self.llos,self.pfof_Pth,self.cosmo)
+            self.lperp,self.llos,self.pfof_Pth,self.cosmo,n_pts_per_sigma)
         self.g3grpid[self.giantsel] = self.giantfofid
         self.g3ssid[self.giantsel] = self.giantfofid
         return self.giantfofid
 
     def deriveGiantCalibrations(self, rproj_fit_guess=None, rproj_fit_params=None, rproj_fit_multiplier=None, vproj_fit_guess=None,\
-                            vproj_fit_params = None, vproj_fit_multiplier = None, vproj_fit_offset = 0,  n_bootstraps=5000):
+                            vproj_fit_params = None, vproj_fit_multiplier = None, vproj_fit_offset = 0,  n_bootstraps=5000, n_pts_per_sigma=5):
         """
         Derive and/or set calibrations for giant-only merging and dwarf association,
         corresponding to Equations 4-5 in H23.
@@ -155,7 +156,7 @@ class pg3groupfinder:
 
         if (rproj_fit_params is None) or (vproj_fit_params is None):
             self.giantgrpra, self.giantgrpdec, self.giantgrpz = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
-                 self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel])
+                 self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
             giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
             self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
             grp_ctd = self.cosmo.comoving_transverse_distance(self.giantgrpz).value
@@ -240,21 +241,16 @@ class pg3groupfinder:
                             self.giantfofid,self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo, n_pts_per_sigma)
         self.g3grpid[self.giantsel] = revisedgiantgrpid
 
-    def dwarfAssoc(self, Pth):
+    def dwarfAssoc(self, Pth, n_pts_per_sigma=5):
         """
         Perform dwarf association (Step 3 of H23) based
         on boundaries calibrated in deriveGiantBoundaries.
         """
         print('Associating dwarfs to giant-only groups...')
         self.dwarfsel = ~self.giantsel
-        #self.giantgrpra, self.giantgrpdec, self.giantgrpz = group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
-        #                                                    self.z[self.giantsel], self.g3grpid[self.giantsel])
-        #self.giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
-        #rbound = self.rproj_boundary(self.giantgrpn)
-        #vbound = self.vproj_boundary(self.giantgrpn)
         dwarfassocid, self.dwarfassocflag = prob_dwarfAssocRoutine(self.radeg[self.dwarfsel], self.dedeg[self.dwarfsel], self.z[self.dwarfsel], \
                 self.zerr[self.dwarfsel], self.radeg[self.giantsel], self.dedeg[self.giantsel], self.z[self.giantsel], self.zerr[self.giantsel],\
-                self.g3grpid[self.giantsel], self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo)
+                self.g3grpid[self.giantsel], self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo, n_pts_per_sigma)
         self.g3grpid[self.dwarfsel] = dwarfassocid
         print(f'Dwarf association complete.')
 
@@ -307,7 +303,7 @@ class pg3groupfinder:
         gdsel = np.full(len(self.z), True)
         gdsel[np.where(self.dwarfsel[np.where(~self.dwarfassocflag)])] = False
         if (self.gd_rproj_fit_params is None) or (self.gd_vproj_fit_params is None):
-            gdgrpra, gdgrpdec, gdgrpz = group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.g3grpid[gdsel])
+            gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
             self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
             
             dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
@@ -383,7 +379,7 @@ class pg3groupfinder:
             else:
                 plt.close()
 
-    def findDwarfOnlyGroups(self):
+    def findDwarfOnlyGroups(self, Pth, n_pts_per_sigma=5):
         """
         From the remaining ungrouped dwarfs, construct dwarf-only groups.
         (Step 4 of H23.)
@@ -392,8 +388,9 @@ class pg3groupfinder:
         startID = np.max(self.g3grpid)+1
         grpn_after_assoc = multiplicity_function(self.g3grpid, True)
         self.dwarfonlysel = (grpn_after_assoc == 1) & self.dwarfsel
-        dwarf_only_grpid = dwarfOnlyICRoutine(self.radeg[self.dwarfonlysel], self.dedeg[self.dwarfonlysel], self.z[self.dwarfonlysel], \
-                           self.absrmag[self.dwarfonlysel], self.gd_rproj_boundary, self.gd_vproj_boundary, startID, self.cosmo)
+        dwarf_only_grpid = prob_dwarfOnlyICRoutine(self.radeg[self.dwarfonlysel], self.dedeg[self.dwarfonlysel], self.z[self.dwarfonlysel], \
+                           self.zerr[self.dwarfonlysel], self.absrmag[self.dwarfonlysel], self.gd_rproj_boundary, self.gd_vproj_boundary, \
+                           Pth, self.cosmo, startID, n_pts_per_sigma)
         self.g3grpid[self.dwarfonlysel] = dwarf_only_grpid
 
     def getCatalog(self, by='galaxy'):
@@ -413,7 +410,7 @@ class pg3groupfinder:
         catalog : numpy array
             Group catalog with columns [grpID, grpRA, grpDEC, grpz, grpN, grpAbsMag].
         """
-        grpra, grpdec, grpz = group_skycoords(self.radeg, self.dedeg, self.z, self.g3grpid)
+        grpra, grpdec, grpz = prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
         grpn = multiplicity_function(self.g3grpid, True)
         grpM = get_int_mag(self.absrmag, self.g3grpid)
         catalog = np.array([self.g3grpid, grpra, grpdec, grpz, grpn, grpM]).T
