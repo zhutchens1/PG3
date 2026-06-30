@@ -43,6 +43,8 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
         Callable function of group Ngiants.
     cosmo : astropy.cosmology object
         Astropy cosmology to specify cosmological distances.
+    Pth : float
+        Threshold probability.
     n_pts_per_sigma : int
         Number of points per standard deviation in redshift grid (for numeric integration).
 
@@ -124,6 +126,10 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
 
 @njit
 def get_dwarf_assoc_prob(giantz, giantzerr, giantpznorm, giantpzinvden2, giantgrpid, dwarfz, dwarfzerr, grpid, eps, n_pts_per_sigma):
+    """
+    Helper function to obtain integrated p(z) probabilities for prob_dwarfAssocRoutine.
+    See that function for details regarding arguments.
+    """
     giantsel = np.where(giantgrpid == grpid)
     zvals = giantz[giantsel]
     zerrvals = giantzerr[giantsel]

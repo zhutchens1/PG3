@@ -32,8 +32,12 @@ def prob_giantOnlyICRoutine(galaxyra, galaxydec, galaxyz, galaxyzerr, giantfofid
     vprojboundary : callable
         Search boundary to apply in line-of-sight. Should be callable function of group N_giants.
         Units: km/s
+    Pth : float
+        Threshold probability.
     cosmo : astropy.cosmology object
        Astropy cosmology for computing cosmological distances.
+    n_pts_per_sigma : int
+        Number of points per standard deviation in p(z) integration.
     
     Returns
     --------------
@@ -65,7 +69,7 @@ def prob_giantOnlyICRoutine(galaxyra, galaxydec, galaxyz, galaxyzerr, giantfofid
 def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rprojboundary,vprojboundary,Pth,cosmo,n_pts_per_sigma):
     """
     Refine input group ID by merging nearest-neighbor groups subject to boundary constraints.
-    For info on arguments, see "giantOnlyICRoutine"
+    For info on arguments, see "prob_giantOnlyICRoutine"
 
     Returns
     --------------

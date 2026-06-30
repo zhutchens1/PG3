@@ -90,6 +90,8 @@ class pg3groupfinder:
             Group finding volume in (Mpc/h)^3 with h corresponding to the `H0` argument, default
             None. This argument is unnecessary if fof_sep is provided. `fof_sep` and `volume`
             cannot both be `None`.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
         """
         self.pfof_Pth = Pth
         self.fof_bperp = fof_bperp
@@ -145,6 +147,8 @@ class pg3groupfinder:
             Units: km/s (default 0 km/s)
         n_bootstraps : int
             Number of bootstraps to use when calculating uncertainties on median values.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
         """
         self.rproj_fit_guess = rproj_fit_guess
         self.rproj_fit_params = rproj_fit_params
@@ -236,6 +240,12 @@ class pg3groupfinder:
         Perform giant-only merging (Step 2 of H23) based
         on boundaries calibrated in deriveGiantBoundaries.
 
+        Parameters
+        ------------------
+        Pth : float
+            Threshold proability.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
         """
         revisedgiantgrpid = prob_giantOnlyICRoutine(self.radeg[self.giantsel],self.dedeg[self.giantsel],self.z[self.giantsel],self.zerr[self.giantsel],\
                             self.giantfofid,self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo, n_pts_per_sigma)
@@ -245,6 +255,13 @@ class pg3groupfinder:
         """
         Perform dwarf association (Step 3 of H23) based
         on boundaries calibrated in deriveGiantBoundaries.
+
+        Parameters
+        ------------------
+        Pth : float
+            Threshold proability.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
         """
         print('Associating dwarfs to giant-only groups...')
         self.dwarfsel = ~self.giantsel
@@ -384,6 +401,12 @@ class pg3groupfinder:
         From the remaining ungrouped dwarfs, construct dwarf-only groups.
         (Step 4 of H23.)
 
+        Parameters
+        ------------------
+        Pth : float
+            Threshold proability.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
         """
         startID = np.max(self.g3grpid)+1
         grpn_after_assoc = multiplicity_function(self.g3grpid, True)
@@ -421,36 +444,3 @@ class pg3groupfinder:
             return catalog[uniqind]
         else:
             raise ValueError(f"Parameter `by` must be 'galaxy' or 'group', not '{by}'.")
-            
-# ------------------------------------------------------------------------------ #
-# ------------------------------------------------------------------------------ #
-# test
-#if __name__=='__main__':
-#    import pandas as pd
-#    df = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
-#    df = df[df.absrmag<=-17.33]
-#
-#    g3 = g3groupfinder(df.radeg, df.dedeg, df.cz/3e5, df.absrmag, -19.5, precision=np.float64)
-#    fofid = g3.giantOnlyFOF(0.07, 1.1, 4.84)
-#    g3.deriveGiantCalibrations(rproj_fit_multiplier=3, vproj_fit_multiplier=4, vproj_fit_offset=200)
-#    #g3.plotGiantGroupBoundaries(show=True)
-#    g3.giantOnlyMerging()
-#    g3.dwarfAssoc()
-#    g3.deriveDwarfBoundaries(gd_rproj_fit_multiplier=2, gd_vproj_fit_multiplier=4, gd_vproj_fit_offs=100, gd_fit_bins=np.arange(-24,-19,0.25))
-#    #g3.plotDwarfBoundaries(show=True, rproj_xlim=(-17,-24), rproj_ylim=(0,0.8), vproj_xlim=(-17,-24), vproj_ylim=(0,800))
-#    g3.findDwarfOnlyGroups()
-#    #cat = g3.getCatalog(by='galaxy')
-#    
-#
-#    grpn = multiplicity_function(g3.g3grpid, False)
-#    dwarfgrpn = multiplicity_function(g3.g3grpid[g3.dwarfonlysel], False)
-#    grpn_true = multiplicity_function(df.g3grp_l, False)
-#    plt.figure()
-#    plt.hist(grpn, bins=np.arange(0.5,400.5,1))
-#    plt.hist(dwarfgrpn, bins=np.arange(0.5,400.5,1), histtype='step', color='orange', hatch='//')
-#    plt.hist(grpn_true, bins=np.arange(0.5,400.5,1), histtype='step', color='k', label='h23')
-#    plt.yscale('log')
-#    plt.legend(loc='best')
-#    plt.show()
-#
-#    #exit()

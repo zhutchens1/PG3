@@ -16,6 +16,7 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
        galaxyz : 1D iterable, list of galaxy redshifts
        galaxyzerr : 1D iterable, list of galaxy redshift uncertainties
        galaxygrpid : 1D iterable, group ID number for every galaxy in previous arguments.
+       n_pte_per_sigma : int, number of points per standard deviation in constructing p(z)
     
     Outputs (all shape match `galaxyra`)
        groupra : RA in decimal degrees of galaxy i's group center.
@@ -57,6 +58,10 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
 
 @njit(parallel=True)
 def get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, zmax, zerrmin, zerrmax, dz, z_grp):
+    """
+    Compiled helper function for `prob_group_skycoords`.
+    See that function for details.
+    """
     norm = 1 / (np.sqrt(2*np.pi) * galaxyzerr)
     inverr = 1 / galaxyzerr
     inv_den2 = -0.5 * inverr * inverr
@@ -136,16 +141,59 @@ def comoving_cartesian_from_spherical(ra, dec, redshift, cosmo):
 
 @vectorize(['float64(float64)'])
 def erf_vec(x):
+    """ Vectorized math.erf using numba vectorize. """
     return erf(x)
 
 @njit
 def get_pz_group(zgrid, zz, norm, invden2):
+    """
+    Construct p(z) for a group.
+
+    Parameters
+    ---------------
+    zgrid : np.array
+        Array of redshift grid points on which to evaluate p(z).
+    zz : np.array
+        Redshifts of group members
+    norm : np.array
+        Gaussian normalization for each group member, i.e. 1 / (sqrt(2*pi) * z_err).
+    invden2 : np.array
+        Gaussian inverse denominator for each group member, i.e. -0.5 / (z_err * z_err).
+        This along with `norm` enable an easy Gaussian calculation as norm * exp(invden2 * (z' - zz)^2).
+
+    Returns
+    ----------------
+    pz : np.array
+        Redshift pdf, unnormalized. Length matches `zgrid`.
+    """
     dz = zgrid.reshape(zgrid.shape[0],1) - zz
     pz = np.sum(norm * np.exp(invden2 * dz * dz), axis=1)
     return pz
 
 @njit
 def dbint_pz_general(zgrid, pz1, pz2, eps):
+    """
+    Compute the linking probability between linking length `eps`
+    given two p(z)'s `pz1` and `pz2`.
+
+    P12 = int(dz * p1(z) * int[p2(z')*dz']_{z-eps}^{z+eps})
+
+    Parameters
+    ---------------
+    zgrid : np.array
+        Array of redshift grid points on which to evaluate & integrate p(z).
+    pz1 : np.array
+        p(z) for galaxy or group 1. Length matches `zgrid`
+    pz2 : np.array
+        p(z) for galaxy or group 2. Length matches `zgrid`
+    eps : float
+        Linking length in redshift units.
+   
+    Returns
+    ---------------
+    P12 : float
+        Probability that pz1 and pz2 are separated by less than `eps`. 
+    """
     cum_D2 = np.zeros(len(zgrid))
     cum_D2[1:] = np.cumsum(pz2[:-1] * np.diff(zgrid))
     lower = np.searchsorted(zgrid, zgrid - eps, side='left')
@@ -158,7 +206,14 @@ def dbint_pz_general(zgrid, pz1, pz2, eps):
 
 @njit
 def dbint_pz_jgauss(zgrid, pz1, z2, zerr2, eps):
-    """ for when p(z|z_j, zerr_j) is Gaussian """
+    """ 
+    Same as dbint_pz_general, but for the special case in which
+    pz2 is Gaussian. In this case, the user need not simply pz2 but
+    just z2 and zerr2, as the inner integral of P12 has an analytic
+    solution for Gaussian pz2.
+
+    See `dbint_pz_general`.
+    """
     den = 1.41421356 * zerr2
     erf_term = erf_vec((z2 - zgrid + eps)/den) - erf_vec((z2 - zgrid - eps)/den)
     P12 = np.sum(0.5 * pz1 * erf_term * (zgrid[1]-zgrid[0]))
@@ -166,11 +221,32 @@ def dbint_pz_jgauss(zgrid, pz1, z2, zerr2, eps):
 
 @njit
 def numba_clip(arr, a_min, a_max):
-    # This matches the behavior of np.clip(arr, a_min, a_max)
+    """
+    numba compatible version of np.clip
+    matches the behavior of np.clip(arr, a_min, a_max)
+    """
     return np.minimum(a_max, np.maximum(arr, a_min))
 
 @njit
 def get_adaptive_zgrid(z1, z2, e1, e2, npts=5):
+    """
+    Obtain a redshift grid to be used for numeric integration,
+    custom tailored to the redshift PDFs at hand.
+
+    Parameters
+    -----------------
+    z1, z2 : float
+        Redshift of galaxies 1 and 2.
+    e1, e2 : float
+        Redshift uncertainty of galaxies 1 and 2.
+    npts : int
+        Number of points per min(e1,e2) sampled in p(z).
+
+    Returns
+    ------------------
+    zgrid : np.array
+        Redshift grid at the specified range and resolution.
+    """
     zmin = min([z1.min(),z2.min()])
     zmax = max([z1.max(),z2.max()])
     emin = min([e1.min(),e2.min()])
@@ -182,6 +258,10 @@ def get_adaptive_zgrid(z1, z2, e1, e2, npts=5):
 
 @njit(parallel=True)
 def integrate_IC(idx_to_integrate, galaxyz, galaxyzerr, grpid, gauss_norm, invden2, uniqgrpid, nnind, seedN, eps, n_pts_per_sigma):
+    """
+    Compiled helper function to compute probabilities by numeric integration
+    for prob_giantOnlyIC and prob_dwarfOnlyIC. See those functions for details.
+    """
     prob = np.zeros(len(uniqgrpid))
     for k in prange(len(idx_to_integrate)):
         ii = idx_to_integrate[k]
@@ -276,6 +356,24 @@ def get_int_mag(galmag, grpid):
     return Mint_grp[galaxyidx]
 
 def central_flag(grpid, galproperty):
+    """
+    Flag galaxies as centrals within each group, based
+    on highest luminosity (i.e., smallest abs magnitude)
+    or greatest mass.
+
+    Parameters
+    ----------------
+    grpid : array_like
+        Group ID for each galaxy.
+    galproperty : array_like
+        Property of each galaxy (abs mag or mass).
+
+    Returns
+    ----------------
+    is_group_max = np.array, int32
+        Flag indicating whether the galaxy is a central 
+        in its group. Length matches `grpid`. 
+    """
     grpid = np.asarray(grpid)
     galproperty = np.asarray(galproperty)
     if (galproperty<=0).all():
@@ -286,6 +384,11 @@ def central_flag(grpid, galproperty):
         pass
     else:
         print(f"Could not determine if `galproperty` is a mass or absolute magnitude.")
+    uniq_groups, galidx = np.unique(grpid, return_inverse=True)
+    max_vals = np.zeros(len(uniq_groups))
+    np.maximum.at(max_vals, galidx, galproperty)
+    is_group_max = (galproperty == max_vals[galidx]).astype(np.int32)
+    return is_group_max
 
 # ------------------------------------------------------------------------------ #
 # Misc. supporting functions
