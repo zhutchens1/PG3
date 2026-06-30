@@ -78,13 +78,12 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
 
     # get cartesian positions of groups, form a kd tree, then find closest dwarf neighbors 
     # using a query ball point.
-    grpXmin, grpYmin, grpZmin = comoving_cartesian_from_spherical(grpra, grpdec, grpz, cosmo)
-    dwarfXmin, dwarfYmin, dwarfZmin = comoving_cartesian_from_spherical(dwarfra, dwarfdec, dwarfz, cosmo)
-    rmax = 16 * np.max(radius_boundary)
+    zmin = min([grpz.min(),dwarfz.min()])
+    grpXmin, grpYmin, grpZmin = comoving_cartesian_from_spherical(grpra, grpdec, zmin, cosmo)
+    dwarfXmin, dwarfYmin, dwarfZmin = comoving_cartesian_from_spherical(dwarfra, dwarfdec, zmin, cosmo)
     grpcoords = np.array([grpXmin,grpYmin,grpZmin]).T
     grp_tree = cKDTree(grpcoords)
     dwarf_tree = cKDTree(np.array([dwarfXmin, dwarfYmin, dwarfZmin]).T)
-    #nnind = grp_tree.query_ball_tree(dwarf_tree, r=rmax)
    
     Ndwarf = len(dwarfra)
     assoc_grpid = np.zeros(Ndwarf, dtype=np.int32) - 1
@@ -92,8 +91,7 @@ def prob_dwarfAssocRoutine(dwarfra, dwarfdec, dwarfz, dwarfzerr, giantra, giantd
     r2plusv2 = np.zeros(Ndwarf)
     N_G = len(grpra)
     for grp_i in tqdm(range(N_G)):
-        #dwarf_i = np.array(nnind[grp_i])
-        dwarf_i = np.array(dwarf_tree.query_ball_point(grpcoords[grp_i], r=16*radius_boundary[grp_i]))
+        dwarf_i = np.array(dwarf_tree.query_ball_point(grpcoords[grp_i], r=radius_boundary[grp_i]))
         if len(dwarf_i) == 0:
             continue
        
