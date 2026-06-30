@@ -8,6 +8,7 @@ from astropy.cosmology import LambdaCDM
 from pg3tools import *
 from kdpfof import kdPFOF
 from prob_giantonlyic import prob_giantOnlyICRoutine
+from prob_dwarfassoc import prob_dwarfAssocRoutine
 #from giantonlyic import giantOnlyICRoutine
 #from dwarfassoc import dwarfAssocRoutine
 #from dwarfonlyic import dwarfOnlyICRoutine
@@ -239,20 +240,21 @@ class pg3groupfinder:
                             self.giantfofid,self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo, n_pts_per_sigma)
         self.g3grpid[self.giantsel] = revisedgiantgrpid
 
-    def dwarfAssoc(self):
+    def dwarfAssoc(self, Pth):
         """
         Perform dwarf association (Step 3 of H23) based
         on boundaries calibrated in deriveGiantBoundaries.
         """
         print('Associating dwarfs to giant-only groups...')
         self.dwarfsel = ~self.giantsel
-        self.giantgrpra, self.giantgrpdec, self.giantgrpz = group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
-                                                            self.z[self.giantsel], self.g3grpid[self.giantsel])
-        self.giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
-        rbound = self.rproj_boundary(self.giantgrpn)
-        vbound = self.vproj_boundary(self.giantgrpn)
-        dwarfassocid, self.dwarfassocflag = dwarfAssocRoutine(self.radeg[self.dwarfsel], self.dedeg[self.dwarfsel], self.z[self.dwarfsel], self.giantgrpra, \
-                          self.giantgrpdec, self.giantgrpz, self.g3grpid[self.giantsel], rbound, vbound, self.cosmo)
+        #self.giantgrpra, self.giantgrpdec, self.giantgrpz = group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+        #                                                    self.z[self.giantsel], self.g3grpid[self.giantsel])
+        #self.giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
+        #rbound = self.rproj_boundary(self.giantgrpn)
+        #vbound = self.vproj_boundary(self.giantgrpn)
+        dwarfassocid, self.dwarfassocflag = prob_dwarfAssocRoutine(self.radeg[self.dwarfsel], self.dedeg[self.dwarfsel], self.z[self.dwarfsel], \
+                self.zerr[self.dwarfsel], self.radeg[self.giantsel], self.dedeg[self.giantsel], self.z[self.giantsel], self.zerr[self.giantsel],\
+                self.g3grpid[self.giantsel], self.rproj_boundary, self.vproj_boundary, Pth, self.cosmo)
         self.g3grpid[self.dwarfsel] = dwarfassocid
         print(f'Dwarf association complete.')
 

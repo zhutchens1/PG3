@@ -104,6 +104,36 @@ def cartesian_from_spherical_z(ra, dec, redshift):
     ZZ = redshift * np.cos(theta)
     return XX, YY, ZZ
 
+def comoving_cartesian_from_spherical(ra, dec, redshift, cosmo):
+    """ 
+    Convert RA/Dec/z to comoving (x,y,z).
+
+    Parameters
+    ----------------
+    ra : array_like
+        RA in decimal degrees.
+    dec : array_like
+        Decl. in decimal degrees.
+    redshift : array_like
+        Redshift (z).
+    cosmo:
+        Astropy cosmology object (specifies
+        comoving distance formulation).
+
+    Returns
+    ----------------
+    XX, YY, ZZ : array_like
+        Cartesian coordinates in comoving Mpc
+        according to the input cosmology.
+    """
+    phi = np.deg2rad(ra)
+    theta = np.pi/2. - np.deg2rad(dec) 
+    dc = cosmo.comoving_distance(redshift).value
+    XX = dc * np.sin(theta) * np.cos(phi)
+    YY = dc * np.sin(theta) * np.sin(phi)
+    ZZ = dc * np.cos(theta)
+    return XX, YY, ZZ
+
 @vectorize(['float64(float64)'])
 def erf_vec(x):
     return erf(x)
@@ -138,7 +168,19 @@ def dbint_pz_jgauss(zgrid, pz1, z2, zerr2, eps):
 def numba_clip(arr, a_min, a_max):
     # This matches the behavior of np.clip(arr, a_min, a_max)
     return np.minimum(a_max, np.maximum(arr, a_min))
-                                                      
+
+@njit
+def get_adaptive_zgrid(z1, z2, e1, e2, npts=5):
+    zmin = min([z1.min(),z2.min()])
+    zmax = max([z1.max(),z2.max()])
+    emin = min([e1.min(),e2.min()])
+    emax = max([e1.max(),e2.max()])
+    dz = emin / 5
+    buff = 4 * emax
+    grid = np.arange(zmin - buff, zmax + buff, dz)
+    return grid
+
+@njit                                                      
 def angular_separation(ra1,dec1,ra2,dec2):
     """ 
     Compute the angular separation between two lists of galaxies using the Haversine formula.

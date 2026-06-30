@@ -1,24 +1,28 @@
 import numpy as np
 import pandas as pd
 from pg3group import pg3groupfinder as pg3gf
+import matplotlib.pyplot as plt
 from pg3tools import *
 import time
 
 if __name__=='__main__':
     # usage example
-    #ls = pd.read_csv('/srv/two/zhutchen/paper3/data/lsdr9/ls_deg.csv')
-    #pg3 = pg3gf(ls.radeg, ls.dedeg, ls.zbest, ls.zbesterr, ls.absrmag,\
-    #                     -19.5, precision=np.float64)
+    ls = pd.read_csv('/srv/two/zhutchen/paper3/data/lsdr9/ls_deg.csv')
+    pg3 = pg3gf(ls.radeg, ls.dedeg, ls.zbest, ls.zbesterr, ls.absrmag,\
+                         -19.5, precision=np.float64)
 
-    eco = pd.read_csv("/srv/one/zhutchen/g3groupfinder/resolve_and_eco/ECOdata_G3catalog_luminosity.csv")
-    zerr = np.full(len(eco),35)/3e5
-    pg3 = pg3gf(eco.radeg, eco.dedeg, eco.cz/3e5, zerr, eco.absrmag,\
-         -19.5, precision=np.float64)
-    fofid=pg3.giantOnlyPFOF(0.9, 0.07, 1.1, 4.84)
-
+    fofid=pg3.giantOnlyPFOF(0.1, 0.07, 1.1, 4.84)
     pg3.deriveGiantCalibrations(rproj_fit_multiplier=3, vproj_fit_multiplier=4, vproj_fit_offset=200)
-    #pg3.plotGiantGroupBoundaries(show=True)
-    pg3.giantOnlyMerging(0.9)
+    pg3.plotGiantGroupBoundaries(show=True)
+    pg3.giantOnlyMerging(0.1)
+    pg3.dwarfAssoc(0.1)
+
+    grpn = multiplicity_function(pg3.g3grpid, False)
+    plt.figure()
+    plt.hist(grpn, bins=np.arange(0.5,50.5,1))
+    plt.yscale('log')
+    plt.show()
+    print(grpn.max())
 
     #grpra,grpdec,grpz=prob_group_skycoords(eco[pg3.giantsel].radeg,eco[pg3.giantsel].dedeg,eco[pg3.giantsel].cz/3e5,zerr[pg3.giantsel],fofid)
     #grpn = multiplicity_function(fofid)

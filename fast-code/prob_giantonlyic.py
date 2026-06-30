@@ -79,7 +79,7 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     gX, gY, gZ = cartesian_from_spherical_z(galaxyra, galaxydec, galaxyz)
     seedra, seeddec, seedz = prob_group_skycoords(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid)
     seedra, seeddec, seedz = seedra[uniqind], seeddec[uniqind], seedz[uniqind]
-    seedX, seedY, seedZ = cartesian_from_spherical_z(seedra, seeddec, seedz.min())
+    seedX, seedY, seedZ = cartesian_from_spherical_z(seedra, seeddec, seedz)#.min())
     seeddm = cosmo.comoving_transverse_distance(seedz).value
 
     # identify neighbor pairs
@@ -121,6 +121,7 @@ def prob_nearest_neighbor_assign(galaxyra,galaxydec,galaxyz,galaxyzerr,grpid,rpr
     prob = integrate_giantOnlyIC(idx_to_integrate[0], galaxyz, galaxyzerr, grpid, gauss_norm, invden2,\
             uniqgrpid, nnind, seedN, eps, n_pts_per_sigma)
     merge = (prob > Pth)
+    
     ii=np.where(merge)[0]
     jj=nnind[ii]
     keep = (ii<jj)
@@ -145,13 +146,7 @@ def integrate_giantOnlyIC(idx_to_integrate, galaxyz, galaxyzerr, grpid, gauss_no
         z_jj = galaxyz[grp_jj_sel]
         zerr_ii = galaxyzerr[grp_ii_sel]
         zerr_jj = galaxyzerr[grp_jj_sel]
-
-        smallest_zerr = min((zerr_ii.min(), zerr_jj.min()))
-        largest_zerr = max((zerr_ii.max(), zerr_jj.max()))
-        smallest_z = min((z_ii.min(), z_jj.min()))
-        largest_z = max((z_ii.max(), z_jj.max()))
-        dz = smallest_zerr / n_pts_per_sigma
-        zgrid = np.arange(smallest_z - 4*largest_zerr, largest_z + 4*largest_zerr, dz)
+        zgrid = get_adaptive_zgrid(z_ii, z_jj, zerr_ii, zerr_jj, npts=n_pts_per_sigma)
         pz_ii = get_pz_group(zgrid, z_ii, gauss_norm[grp_ii_sel], invden2[grp_ii_sel])
         if seedN[jj]==1:
             prob[ii] = dbint_pz_jgauss(zgrid, pz_ii, z_jj, zerr_jj, eps[ii])
