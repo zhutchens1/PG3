@@ -150,6 +150,7 @@ class pg3groupfinder:
         n_pts_per_sigma : int
             Number of points per standard deviation in p(z) integration.
         """
+        self.vproj_fit_scaled = False
         self.rproj_fit_guess = rproj_fit_guess
         self.rproj_fit_params = rproj_fit_params
         self.rproj_fit_multiplier = rproj_fit_multiplier
@@ -192,6 +193,85 @@ class pg3groupfinder:
         self.rproj_boundary = lambda Ngiants: self.rproj_fit_multiplier*giantmodel(Ngiants, *self.rproj_bestfit)
         self.vproj_boundary = lambda Ngiants: self.vproj_fit_multiplier*giantmodel(Ngiants, *self.vproj_bestfit) + self.vproj_fit_offset
 
+
+    def deriveGiantCalibrationsScaled(self, rproj_fit_guess=None, rproj_fit_params=None, rproj_fit_multiplier=None, 
+        vproj_fit_multiplier = None, vproj_fit_offset = 0, av_aR_ratio=1127, bv_bR_ratio=0.41,  n_bootstraps=5000, n_pts_per_sigma=5):
+        """
+        Derive PG3-geared calibrations for giant-only merging and dwarf association,
+        corresponding to Equations 4-5 in H23.
+
+        In H23 both R_proj^fit and Dv_proj^fit are fit as models. However, with photo-z data sets
+        individual peculiar velocities (v_proj,gal) are poorly determined, as they are comparable
+        or even smaller than zphot uncertainties. To circumvent this issue, this function derives
+        R_proj^fit via a model fit (as in H23) but then determines Dv_proj^fit using the scaling
+        parameters av_aR_ratio and bv_bR_ratio, with default values set from H23 (see Table 1). 
+        Other z=0 surveys can use these ratio values, but higher-z values may need to recalibrate
+        these ratios using mock catalogs or spec-z data subsets.
+
+        See `deriveGiantCalibrations` for more information.
+
+        Parameters
+        ---------------------------------------------------------------
+        rproj_fit_guess : iterable
+            Guess supplied to scipy.optimize.curve_fit when fitting rproj,gal vs. N_giants.
+        rproj_fit_params : iterable
+            Parameters to use when associating dwarfs and/or iteratively combining giant-only groups.
+            If this parameter is passed, then the fit to rproj,gal vs. N_giants is not performed.
+        rproj_fit_multiplier : float
+            Scalar multiplier for rproj_fit.
+            If this parameter is passed, then the fit to vproj,gal vs. N_giants is not performed.
+        vproj_fit_multiplier : float
+            Scalar multiplier for vproj_fit.
+        vproj_fit_offset : float
+            Vertical offset to fitted boundary model for giant-only merging and dwarf association.
+            i.e. association boundary of vproj_fit_multiplier * model(Ngiant) + vproj_fit_offset.
+            Units: km/s (default 0 km/s)
+        aR_av_ratio : float
+            Ratio of av to aR (see H23 Eqns 4+5).
+            The default value 1127 comes from H23 (345/0.306).
+        bR_bv_ratio : float
+            Ratio of bv to bR (see H23 Eqns 4+5).
+            The default value 0.41 comes from H23 (0.17 / 0.416).
+        n_bootstraps : int
+            Number of bootstraps to use when calculating uncertainties on median values.
+        n_pts_per_sigma : int
+            Number of points per standard deviation in p(z) integration.
+        """
+        self.vproj_fit_scaled = True
+        self.rproj_fit_guess = rproj_fit_guess
+        self.rproj_fit_params = rproj_fit_params
+        self.rproj_fit_multiplier = rproj_fit_multiplier
+        self.vproj_fit_multiplier = vproj_fit_multiplier
+        self.vproj_fit_offset = vproj_fit_offset
+
+        self.giantgrpra, self.giantgrpdec, self.giantgrpz = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+             self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
+        giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
+        self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) 
+        # ^ from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
+        grp_ctd = self.cosmo.comoving_transverse_distance(self.giantgrpz).value
+        gia_ctd = self.cosmo.comoving_transverse_distance(self.z[self.giantsel]).value
+        self.relprojdist = (grp_ctd+gia_ctd)*np.sin(angular_separation(self.giantgrpra, self.giantgrpdec, self.radeg[self.giantsel], \
+            self.dedeg[self.giantsel])/2.0)
+        self.giantgrpn = multiplicity_function(self.g3grpid[self.giantsel], return_by_galaxy=True)
+        self.uniqgiantgrpn, uniqindex = np.unique(self.giantgrpn, return_index=True)
+        keepcalsel = np.where(self.uniqgiantgrpn>1)
+        self.median_relprojdist = np.array([np.median(self.relprojdist[np.where(self.giantgrpn==sz)]) for sz in self.uniqgiantgrpn[keepcalsel]])
+        self.rproj_median_error = np.std(np.array([smoothedbootstrap(self.relprojdist[np.where(self.giantgrpn==sz)], n_bootstraps, np.median,\
+                 kwargs=dict({'axis':1 })) for sz in self.uniqgiantgrpn[keepcalsel]]), axis=1)
+        self.median_relvel = np.array([np.median(self.relvel[np.where(self.giantgrpn==sz)]) for sz in self.uniqgiantgrpn[keepcalsel]])
+        self.dvproj_median_error = np.std(np.array([smoothedbootstrap(self.relvel[np.where(self.giantgrpn==sz)], n_bootstraps, np.median,\
+                 kwargs=dict({'axis':1})) for sz in self.uniqgiantgrpn[keepcalsel]]), axis=1) 
+        self.rproj_bestfit, rproj_bestfit_cov = curve_fit(giantmodel, self.uniqgiantgrpn[keepcalsel], self.median_relprojdist,\
+                 sigma=self.rproj_median_error, p0=rproj_fit_guess)
+        self.rproj_bestfit_err = np.sqrt(np.diag(rproj_bestfit_cov))
+
+        ratios = np.array([av_aR_ratio,bv_bR_ratio])
+        self.vproj_bestfit = ratios * self.rproj_bestfit
+        self.vproj_bestfit_err = np.zeros(len(self.vproj_bestfit))-99.
+        self.rproj_boundary = lambda Ngiants: self.rproj_fit_multiplier*giantmodel(Ngiants, *self.rproj_bestfit)
+        self.vproj_boundary = lambda Ngiants: self.vproj_fit_multiplier*giantmodel(Ngiants, *self.vproj_bestfit) + self.vproj_fit_offset
+
     def plotGiantGroupBoundaries(self, show=False, savepath=None, rproj_xlim=20, rproj_ylim=1, vproj_xlim=20, vproj_ylim=1000, legend_alpha=0.5, dpi=300):
         """
         Plot the underlying data and boundaries following from `deriveGiantCalibrations.`
@@ -212,8 +292,12 @@ class pg3groupfinder:
         axs[0].plot(tx, giantmodel(tx, *self.rproj_bestfit), color='blue', label=r'$1R_{\rm proj}^{\rm fit}$')
         axs[0].plot(tx, self.rproj_boundary(tx), color='green', linestyle='dashed', label=str(self.rproj_fit_multiplier)+r'$R_{\rm proj}^{\rm fit}$')
         axs[1].scatter(self.giantgrpn, self.relvel, color='red', s=2, rasterized=True, label=r'Giant Galaxies ($\Delta v_{\rm proj,\, gal}$)')
-        axs[1].errorbar(self.uniqgiantgrpn[1:], self.median_relvel, yerr=self.dvproj_median_error, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$')
-        axs[1].plot(tx, giantmodel(tx, *self.vproj_bestfit), color='blue', label=r'$1\Delta v_{\rm proj}^{\rm fit}$')
+
+        vprojfit_label = r'$1\Delta v_{\rm proj}^{\rm fit}$'
+        if not self.vproj_fit_scaled:
+            axs[1].errorbar(self.uniqgiantgrpn[1:], self.median_relvel, yerr=self.dvproj_median_error, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$')
+            vprojfit_label += ' (Scaled)'
+        axs[1].plot(tx, giantmodel(tx, *self.vproj_bestfit), color='blue', label=vprojfit_label)
         axs[1].plot(tx, self.vproj_boundary(tx), color='green', linestyle='dashed', label=str(self.vproj_fit_multiplier)+r'$\Delta v_{\rm proj}^{\rm fit}$'+\
             f' + {self.vproj_fit_offset} km/s')
         axs[0].set_xlim(0, rproj_xlim)
@@ -308,6 +392,7 @@ class pg3groupfinder:
             Array of bin edges for binning and fitting properties of giant+dwarf groups prior to
             dwarf-only group finding. 
         """
+        self.gd_vproj_fit_scaled = False
         self.gd_rproj_fit_guess = gd_rproj_fit_guess
         self.gd_rproj_fit_params = gd_rproj_fit_params
         self.gd_rproj_fit_multiplier = gd_rproj_fit_multiplier
@@ -351,50 +436,125 @@ class pg3groupfinder:
         self.gd_rproj_boundary = lambda M: self.gd_rproj_fit_multiplier*decayexp(M, *self.gd_rproj_bestfit)
         self.gd_vproj_boundary = lambda M: self.gd_vproj_fit_multiplier*decayexp(M, *self.gd_vproj_bestfit) + self.gd_vproj_fit_offs
 
+    def deriveDwarfBoundariesScaled(self, gd_rproj_fit_guess = None, gd_rproj_fit_params = None, gd_rproj_fit_multiplier=None,\
+                      gd_vproj_fit_multiplier=None, gd_vproj_fit_offs = None, gd_fit_bins=None, alpha_vR_ratio=576, beta_vR_ratio=0.82):
+        """
+        Derive the boundaries for dwarf-only iterative combination
+        (Eqns. 7+8 of H23).
+
+        This function using a scaling approach to derive the boundaries, which
+        better resolves dv_(proj,fit)^(gi,dw) in photo-z data sets. The approach
+        is analogous to deriveGiantCalibrationsScaled, see that function for details.
+
+        Parameters
+        -----------------------------------------
+        gd_rproj_fit_guess : iterable
+            Guess supplied to scipy.optimize.curve_fit when fitting gdrproj,gal vs. Ltot.
+        gd_rproj_fit_params : iterable
+            Parameters to use when iteratively combining dwarf-only seed groups.
+            If this parameter is passed, then the fit to gdrproj,gal vs. Ltot is not performed.
+        gd_rproj_fit_multiplier : float
+            Scalar multiplier of gd_rproj_fit for use in dwarf-only group finding.
+        gd_vproj_fit_multiplier : float
+            Scalar multiplier of gd_vproj_fit for use in dwarf-only group finding.
+        gd_vproj_fit_offset : float
+            Vertical offset to fitted boundary model for dwarf-only group finding.
+            i.e. boundary of gd_vproj_fit_multiplier * model(group Lr) + gd_vproj_fit_offset
+        gd_fit_bins : iterable
+            Array of bin edges for binning and fitting properties of giant+dwarf groups prior to
+            dwarf-only group finding. 
+        alpha_vR_ratio : float
+            Ratio of alpha_v to alpha_R to use in scaling (see H23 Equations 7+8 and Table 1).
+            Default value from H23 is 576.
+        beta_vR_ratio : float
+            Ratio of beta_v to beta_R to use in scaling (see H23 Equations 7+8 and Table 1).
+            Default value from H23 is 0.82.
+        """
+        self.gd_vproj_fit_scaled = True
+        self.gd_rproj_fit_guess = gd_rproj_fit_guess
+        self.gd_rproj_fit_params = gd_rproj_fit_params
+        self.gd_rproj_fit_multiplier = gd_rproj_fit_multiplier
+        self.gd_vproj_fit_multiplier = gd_vproj_fit_multiplier
+        self.gd_vproj_fit_offs = gd_vproj_fit_offs
+        self.gd_fit_bins = gd_fit_bins
+
+        gdsel = np.full(len(self.z), True)
+        gdsel[np.where(self.dwarfsel[np.where(~self.dwarfassocflag)])] = False
+        gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
+        self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
+        
+        dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
+        dMj = self.cosmo.comoving_transverse_distance(self.z[gdsel]).value
+        alpha_ij = angular_separation(gdgrpra, gdgrpdec, self.radeg[gdsel], self.dedeg[gdsel])
+        self.gd_rproj = 0.5 * (dMi + dMj) * alpha_ij
+        self.gd_vpec = SPEED_OF_LIGHT * np.abs(gdgrpz - self.z[gdsel]) / (1 + gdgrpz)
+        self.gd_Mint = get_int_mag(self.absrmag[gdsel], self.g3grpid[gdsel])
+        self.gdbinsel = np.where(np.logical_and(self.gdgrpn>1, self.gd_Mint>-24))
+        self.gdmedianrproj, self.gd_magbinc, _, _ = center_binned_stats(self.gd_Mint[self.gdbinsel], self.gd_rproj[self.gdbinsel], np.median,\
+             bins=self.gd_fit_bins)
+        self.gdmedianrproj_err, _, _, _ = center_binned_stats(self.gd_Mint[self.gdbinsel], self.gd_rproj[self.gdbinsel], sigmarange, bins=self.gd_fit_bins)
+        self.gdmedianrelvel, _, _, _ = center_binned_stats(self.gd_Mint[self.gdbinsel], self.gd_vpec[self.gdbinsel], np.median, bins=self.gd_fit_bins)
+        self.gdmedianrelvel_err, _, _, _ = center_binned_stats(self.gd_Mint[self.gdbinsel], self.gd_vpec[self.gdbinsel], sigmarange, bins=self.gd_fit_bins)
+        nansel = np.isnan(self.gdmedianrproj)
+        self.gd_rproj_bestfit, gd_rproj_cov=curve_fit(decayexp, self.gd_magbinc[~nansel], self.gdmedianrproj[~nansel], p0=self.gd_rproj_fit_guess)
+        self.gd_rproj_bestfit_err = np.sqrt(np.diag(gd_rproj_cov))
+        ratios = np.array([alpha_vR_ratio, beta_vR_ratio])
+        self.gd_vproj_bestfit = ratios * self.gd_rproj_bestfit
+        self.gd_vproj_bestfit_err = np.zeros_like(self.gd_rproj_bestfit)-99.
+        self.gd_rproj_boundary = lambda M: self.gd_rproj_fit_multiplier*decayexp(M, *self.gd_rproj_bestfit)
+        self.gd_vproj_boundary = lambda M: self.gd_vproj_fit_multiplier*decayexp(M, *self.gd_vproj_bestfit) + self.gd_vproj_fit_offs
+
     def plotDwarfBoundaries(self, show=False, savepath=None, rproj_xlim=None, rproj_ylim=None, vproj_xlim=None, vproj_ylim=None, legend_alpha=0.5, dpi=300):
-            """
-            Plot the underlying data and boundaries following from `deriveDwarfCalibrations.`
-            Matches the form of Figure 7 in H23.
+        """
+        Plot the underlying data and boundaries following from `deriveDwarfCalibrations.`
+        Matches the form of Figure 7 in H23.
 
-            Parameters
-            -------------------
-            show : bool, default False
-                Display the plot in real time?
-            savepath : str
-                Path on disk to save the plot. If None, figure is not saved (default).
-            """
-            Marr = np.linspace(-24,-17,1000)
-            fig,axs=plt.subplots(ncols=2, figsize=(7,4))
-            axs[0].scatter(self.gd_Mint[self.gdbinsel], self.gd_rproj[self.gdbinsel], s=1, alpha=0.5, color='gray', rasterized=True, label='Galaxies')
-            axs[0].plot(Marr, self.gd_rproj_boundary(Marr)/self.gd_rproj_fit_multiplier, color='red', label=r'$R_{\rm proj,\, fit}^{\rm gi,\, dw}$')
-            axs[0].plot(Marr, self.gd_rproj_boundary(Marr), color='blue', linestyle='dashed', \
-                    label=str(self.gd_rproj_fit_multiplier)+r'$R_{\rm proj,\, fit}^{\rm gi,\, dw}$')
-            axs[0].plot(self.gd_magbinc, self.gdmedianrproj, 'k^', label='Medians')
-            axs[0].legend(loc='upper left', framealpha=legend_alpha)
-            axs[0].set_xlabel(r"Integrated Giant+Dwarf $M_r$",fontsize=10)
-            axs[0].set_ylabel(r"$R_{\rm proj}^{\rm gi,dw}$",fontsize=10)
-            if rproj_xlim is not None: axs[0].set_xlim(rproj_xlim)
-            if rproj_ylim is not None: axs[0].set_ylim(rproj_ylim)
+        Parameters
+        -------------------
+        show : bool, default False
+            Display the plot in real time?
+        savepath : str
+            Path on disk to save the plot. If None, figure is not saved (default).
+        """
+        Marr = np.linspace(-24,-17,1000)
+        fig,axs=plt.subplots(ncols=2, figsize=(7,4))
+        axs[0].scatter(self.gd_Mint[self.gdbinsel], self.gd_rproj[self.gdbinsel], s=1, alpha=0.5, color='gray', rasterized=True, label='Galaxies')
+        axs[0].plot(Marr, self.gd_rproj_boundary(Marr)/self.gd_rproj_fit_multiplier, color='red', label=r'$R_{\rm proj,\, fit}^{\rm gi,\, dw}$')
+        axs[0].plot(Marr, self.gd_rproj_boundary(Marr), color='blue', linestyle='dashed', \
+                label=str(self.gd_rproj_fit_multiplier)+r'$R_{\rm proj,\, fit}^{\rm gi,\, dw}$')
+        axs[0].plot(self.gd_magbinc, self.gdmedianrproj, 'k^', label='Medians')
+        axs[0].legend(loc='upper left', framealpha=legend_alpha)
+        axs[0].set_xlabel(r"Integrated Giant+Dwarf $M_r$",fontsize=10)
+        axs[0].set_ylabel(r"$R_{\rm proj}^{\rm gi,dw}$",fontsize=10)
+        if rproj_xlim is not None: axs[0].set_xlim(rproj_xlim)
+        if rproj_ylim is not None: axs[0].set_ylim(rproj_ylim)
 
-            axs[1].scatter(self.gd_Mint[self.gdbinsel], self.gd_vpec[self.gdbinsel], s=1, alpha=0.5, color='gray', rasterized=True, label='Galaxies')
-            axs[1].plot(Marr, (self.gd_vproj_boundary(Marr)-self.gd_vproj_fit_offs)/self.gd_vproj_fit_multiplier, color='red',\
-                        label=r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$')
-            axs[1].plot(Marr, self.gd_vproj_boundary(Marr), color='blue', linestyle='dashed', \
-                   label=str(self.gd_vproj_fit_multiplier)+r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$'+f'+{self.gd_vproj_fit_offs} km/s')
+        axs[1].scatter(self.gd_Mint[self.gdbinsel], self.gd_vpec[self.gdbinsel], s=1, alpha=0.5, color='gray', rasterized=True, label='Galaxies')
+
+        vlabel = r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$'
+        if self.gd_vproj_fit_scaled: vlabel+=' (Scaled)'
+        axs[1].plot(Marr, (self.gd_vproj_boundary(Marr)-self.gd_vproj_fit_offs)/self.gd_vproj_fit_multiplier, color='red',\
+                    label=vlabel)
+        axs[1].plot(Marr, self.gd_vproj_boundary(Marr), color='blue', linestyle='dashed', \
+               label=str(self.gd_vproj_fit_multiplier)+r'$\Delta v_{\rm proj,\, fit}^{\rm gi,\, dw}$'+f'+{self.gd_vproj_fit_offs} km/s')
+        if not self.gd_vproj_fit_scaled:
             axs[1].plot(self.gd_magbinc, self.gdmedianrelvel, 'k^', label='Medians')
-            axs[1].legend(loc='upper left', framealpha=legend_alpha)
-            axs[1].set_xlabel(r"Integrated Giant+Dwarf $M_r$",fontsize=10)
-            axs[1].set_ylabel(r"$\Delta v_{\rm proj}^{\rm gi,dw}$",fontsize=10)
-            if vproj_xlim is not None: axs[1].set_xlim(vproj_xlim)
-            if vproj_ylim is not None: axs[1].set_ylim(vproj_ylim)
+        axs[1].legend(loc='upper left', framealpha=legend_alpha)
+        axs[1].set_xlabel(r"Integrated Giant+Dwarf $M_r$",fontsize=10)
+        axs[1].set_ylabel(r"$\Delta v_{\rm proj}^{\rm gi,dw}$",fontsize=10)
+        if vproj_xlim is not None: axs[1].set_xlim(vproj_xlim)
+        if vproj_ylim is not None: axs[1].set_ylim(vproj_ylim)
 
-            plt.tight_layout()
-            if savepath is not None:
-                plt.savefig(savepath, dpi=dpi)
-            if show:
-                plt.show()
-            else:
-                plt.close()
+        axs[0].invert_xaxis()
+        axs[1].invert_xaxis()
+
+        plt.tight_layout()
+        if savepath is not None:
+            plt.savefig(savepath, dpi=dpi)
+        if show:
+            plt.show()
+        else:
+            plt.close()
 
     def findDwarfOnlyGroups(self, Pth, n_pts_per_sigma=5):
         """
