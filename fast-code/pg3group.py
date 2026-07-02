@@ -576,6 +576,10 @@ class pg3groupfinder:
                            Pth, self.cosmo, startID, n_pts_per_sigma)
         self.g3grpid[self.dwarfonlysel] = dwarf_only_grpid
 
+    def get_grpn(self, by_galaxy):
+        """ alias for pg3tools.multiplicity_function """
+        return multiplicity_function(self.g3grpid, return_by_galaxy=by_galaxy)
+
     def getCatalog(self, by='galaxy'):
         """
         Return a group catalog containing group IDs, group centers,
