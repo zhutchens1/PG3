@@ -139,6 +139,46 @@ def comoving_cartesian_from_spherical(ra, dec, redshift, cosmo):
     ZZ = dc * np.cos(theta)
     return XX, YY, ZZ
 
+def prob_fof_sep(zz, zerr, zmin, zmax, volume):
+    p_btwn = p_gal_in_zrange(zz, zerr, zmin, zmax)
+    Nprob = np.sum(p_btwn)
+    nden = Nprob / volume
+    sep = nden ** (-1/3.)
+    return sep
+
+def p_gal_in_zrange(zz, zerr, zmin, zmax):
+    """ 
+    Probability that galaxy redshift is between
+    zmin and zmax. Vectorized function that computes
+    this probability for each galaxy.
+
+    Parameters
+    --------------
+    zz : np.array
+        galaxy redshifts
+    zerr : np.array
+        galaxy redshift uncertainties
+    zmin : float or np.array
+        minimum redshift (lower bound)
+    zmax : float or np.array
+        maximum redshift (lower bound)
+
+    Returns
+    ---------------
+    p_btwn : np.array
+        Probability that galaxy redshift is
+        between zmin and zmax. length matches
+        `zz`.
+    """
+    p1 = gaussian_cdf(zmin, zz, zerr)
+    p2 = gaussian_cdf(zmax, zz, zerr)
+    p_btwn = p2 - p1
+    return p_btwn
+
+def gaussian_cdf(x, mu, sig):
+    """ vectorized Gaussian cdf for mean mu and scale sig """
+    return 0.5*(1+erf_vec((x-mu)/(1.4142135*sig)))
+
 @vectorize(['float64(float64)'])
 def erf_vec(x):
     """ Vectorized math.erf using numba vectorize. """
@@ -416,7 +456,7 @@ def giantmodel(x, a, b):
     return np.abs(a)*np.log10(np.abs(b)*x+1)
 
 def decayexp(x, a, b):
-    return np.abs(a)*np.exp(-1*np.abs(b)*x)
+    return np.abs(a)*np.exp(-1*np.abs(b)*(x+19.5))
 
 def smoothedbootstrap(data, n_bootstraps, user_statistic, kwargs=None, random_state=None):
     """Compute smoothed bootstrapped statistics of a data set.
