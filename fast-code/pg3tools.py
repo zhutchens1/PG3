@@ -140,6 +140,34 @@ def comoving_cartesian_from_spherical(ra, dec, redshift, cosmo):
     return XX, YY, ZZ
 
 def prob_fof_sep(zz, zerr, zmin, zmax, volume):
+    """
+    Get the probabilistic intergalaxy separation
+    based on the probabilistic mean number density estimate.
+    Mathematically this is
+        n = sum(p_i) / V
+    where p_i is the probability of galaxy i being
+    within zmin and zmax:
+        p_i = CDF(zmax | z_i, sigma_i) - CDF(zmin | z_i, sigma_i)
+    See also 'p_gal_in_zrange'.
+
+    Parameters
+    --------------
+    zz : np.array
+        Array of galaxy redshifts.
+    zerr : np.array
+        Array of galaxy redshift uncertainties
+    zmin : np.array or float
+        Lower redshift limit used to evaluate pdf.
+    zmax : np.array or float
+        Upper redshift limit used to evaluate pdf.
+    volume : float
+        Volume of group-finding region (Mpc3)
+    
+    Returns
+    --------------
+    sep : float
+        Mean intergalaxy separation (Mpc)
+    """
     p_btwn = p_gal_in_zrange(zz, zerr, zmin, zmax)
     Nprob = np.sum(p_btwn)
     nden = Nprob / volume
@@ -432,6 +460,31 @@ def central_flag(grpid, galproperty):
     np.maximum.at(max_vals, galidx, galproperty)
     is_group_max = (galproperty == max_vals[galidx]).astype(np.int32)
     return is_group_max
+
+def group_spec_frac(zspecflag, grpid):
+    """
+    Parameters
+    ----------------
+    zspecflag : np.array
+        Binary array indicating spec-z or phoot-z. 1 = spec-z.
+        Length = # of galaxies across all groups.
+    grpid : np.array
+        Group ID of each galaxy's host group.
+        Length matches zspecflag.
+
+    Returns 
+    ----------------
+    specfrac : np.array
+        Spec-z fraction of galaxy's host group. Length matches
+        zspec flag.
+    """
+    zspecflag = np.asarray(zspecflag)
+    grpid = np.asarray(grpid)
+    _, galaxyidx, grpn = np.unique(grpid, return_inverse=True, return_counts=True)
+    specfrac = np.zeros(len(grpn))
+    np.add.at(specfrac, galaxyidx, zspecflag)
+    specfrac = (specfrac / grpn)[galaxyidx]
+    return specfrac
 
 # ------------------------------------------------------------------------------ #
 # Misc. supporting functions
