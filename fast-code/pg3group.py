@@ -403,7 +403,8 @@ class pg3groupfinder:
         self.gd_fit_bins = gd_fit_bins
 
         gdsel = np.full(len(self.z), True)
-        gdsel[np.where(self.dwarfsel[np.where(~self.dwarfassocflag)])] = False
+        dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
+        gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
         if (self.gd_rproj_fit_params is None) or (self.gd_vproj_fit_params is None):
             gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
             self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
@@ -479,7 +480,8 @@ class pg3groupfinder:
         self.gd_fit_bins = gd_fit_bins
 
         gdsel = np.full(len(self.z), True)
-        gdsel[np.where(self.dwarfsel[np.where(~self.dwarfassocflag)])] = False
+        dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
+        gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
         gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
         self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
         
