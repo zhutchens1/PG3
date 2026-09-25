@@ -162,7 +162,7 @@ class pg3groupfinder:
         self.vproj_fit_offset = vproj_fit_offset
 
         if (rproj_fit_params is None) or (vproj_fit_params is None):
-            self.giantgrpra, self.giantgrpdec, self.giantgrpz, _, _, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+            self.giantgrpra, self.giantgrpdec, _, _, self.giantgrpz, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
                  self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
             giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
             self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
@@ -246,7 +246,7 @@ class pg3groupfinder:
         self.vproj_fit_multiplier = vproj_fit_multiplier
         self.vproj_fit_offset = vproj_fit_offset
 
-        self.giantgrpra, self.giantgrpdec, self.giantgrpz, _, _, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+        self.giantgrpra, self.giantgrpdec, _, _, self.giantgrpz, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
              self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
         giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
         self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) 
@@ -409,7 +409,7 @@ class pg3groupfinder:
         dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
         gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
         if (self.gd_rproj_fit_params is None) or (self.gd_vproj_fit_params is None):
-            gdgrpra, gdgrpdec, gdgrpz, _, _, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
+            gdgrpra, gdgrpdec, _, _, gdgrpz, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
             self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
             
             dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
@@ -485,7 +485,7 @@ class pg3groupfinder:
         gdsel = np.full(len(self.z), True)
         dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
         gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
-        gdgrpra, gdgrpdec, gdgrpz, _, _, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
+        gdgrpra, gdgrpdec, _, _, gdgrpz, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
         self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
         
         dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
@@ -606,12 +606,12 @@ class pg3groupfinder:
         Returns
         ---------------------
         catalog : numpy array
-            Group catalog with columns [grpID, grpRA, grpDEC, grpz, grpN, grpAbsMag].
+            Group catalog with columns [grpID, grpRA, grpDEC, z16, zavg, z50, z84, grpN, grpAbsMag].
         """
-        grpra, grpdec, grpz, z16, z50, z84 = prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
+        grpra, grpdec, zavg, z16, z50, z84 = prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
         grpn = multiplicity_function(self.g3grpid, True)
         grpM = get_int_mag(self.absrmag, self.g3grpid)
-        catalog = np.array([self.g3grpid, grpra, grpdec, grpz, grpn, grpM]).T
+        catalog = np.array([self.g3grpid, grpra, grpdec, z16, zavg, z50, z84, grpn, grpM]).T
         if by == 'galaxy':
             return catalog
         elif by == 'group':
