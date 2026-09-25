@@ -2,8 +2,10 @@ import time
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt 
+from matplotlib.backends.backend_pdf import PdfPages
 from scipy.optimize import curve_fit
 from astropy.cosmology import LambdaCDM
+from datetime import datetime
 
 from pg3tools import *
 from kdpfof import kdPFOF
@@ -160,7 +162,7 @@ class pg3groupfinder:
         self.vproj_fit_offset = vproj_fit_offset
 
         if (rproj_fit_params is None) or (vproj_fit_params is None):
-            self.giantgrpra, self.giantgrpdec, self.giantgrpz = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+            self.giantgrpra, self.giantgrpdec, self.giantgrpz, _, _, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
                  self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
             giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
             self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) # from https://academic.oup.com/mnras/article/442/2/1117/983284#30931438
@@ -244,7 +246,7 @@ class pg3groupfinder:
         self.vproj_fit_multiplier = vproj_fit_multiplier
         self.vproj_fit_offset = vproj_fit_offset
 
-        self.giantgrpra, self.giantgrpdec, self.giantgrpz = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
+        self.giantgrpra, self.giantgrpdec, self.giantgrpz, _, _, _ = prob_group_skycoords(self.radeg[self.giantsel], self.dedeg[self.giantsel],\
              self.z[self.giantsel], self.zerr[self.giantsel], self.g3grpid[self.giantsel], n_pts_per_sigma)
         giantgrpcz = SPEED_OF_LIGHT*self.giantgrpz
         self.relvel = np.abs(giantgrpcz - SPEED_OF_LIGHT*self.z[self.giantsel])/(1+self.giantgrpz) 
@@ -294,8 +296,8 @@ class pg3groupfinder:
         axs[1].scatter(self.giantgrpn, self.relvel, color='red', s=2, rasterized=True, label=r'Giant Galaxies ($\Delta v_{\rm proj,\, gal}$)')
 
         vprojfit_label = r'$1\Delta v_{\rm proj}^{\rm fit}$'
-        if not self.vproj_fit_scaled:
-            axs[1].errorbar(self.uniqgiantgrpn[1:], self.median_relvel, yerr=self.dvproj_median_error, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$')
+        axs[1].errorbar(self.uniqgiantgrpn[1:], self.median_relvel, yerr=self.dvproj_median_error, fmt='^', color='k', label=r'$\Delta v_{\rm proj}$')
+        if self.vproj_fit_scaled:
             vprojfit_label += ' (Scaled)'
         axs[1].plot(tx, giantmodel(tx, *self.vproj_bestfit), color='blue', label=vprojfit_label)
         axs[1].plot(tx, self.vproj_boundary(tx), color='green', linestyle='dashed', label=str(self.vproj_fit_multiplier)+r'$\Delta v_{\rm proj}^{\rm fit}$'+\
@@ -318,6 +320,7 @@ class pg3groupfinder:
             plt.show()
         else:
             plt.close()
+        return fig
 
     def giantOnlyMerging(self, Pth, n_pts_per_sigma=5):
         """
@@ -406,7 +409,7 @@ class pg3groupfinder:
         dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
         gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
         if (self.gd_rproj_fit_params is None) or (self.gd_vproj_fit_params is None):
-            gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
+            gdgrpra, gdgrpdec, gdgrpz, _, _, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
             self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
             
             dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
@@ -482,7 +485,7 @@ class pg3groupfinder:
         gdsel = np.full(len(self.z), True)
         dwarf_fullcat_idx = np.where(self.dwarfsel)[0]
         gdsel[dwarf_fullcat_idx[~self.dwarfassocflag]] = False
-        gdgrpra, gdgrpdec, gdgrpz = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
+        gdgrpra, gdgrpdec, gdgrpz, _, _, _ = prob_group_skycoords(self.radeg[gdsel], self.dedeg[gdsel], self.z[gdsel], self.zerr[gdsel], self.g3grpid[gdsel])
         self.gdgrpn = multiplicity_function(self.g3grpid[gdsel], return_by_galaxy=True)
         
         dMi = self.cosmo.comoving_transverse_distance(gdgrpz).value
@@ -557,6 +560,7 @@ class pg3groupfinder:
             plt.show()
         else:
             plt.close()
+        return fig
 
     def findDwarfOnlyGroups(self, Pth, n_pts_per_sigma=5):
         """
@@ -582,6 +586,11 @@ class pg3groupfinder:
         """ alias for pg3tools.multiplicity_function """
         return multiplicity_function(self.g3grpid, return_by_galaxy=by_galaxy)
 
+    def get_group_centers(self):
+        """ alias for pg3tools.prob_group_skycoords """
+        return prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
+
+
     def getCatalog(self, by='galaxy'):
         """
         Return a group catalog containing group IDs, group centers,
@@ -599,7 +608,7 @@ class pg3groupfinder:
         catalog : numpy array
             Group catalog with columns [grpID, grpRA, grpDEC, grpz, grpN, grpAbsMag].
         """
-        grpra, grpdec, grpz = prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
+        grpra, grpdec, grpz, z16, z50, z84 = prob_group_skycoords(self.radeg, self.dedeg, self.z, self.zerr, self.g3grpid)
         grpn = multiplicity_function(self.g3grpid, True)
         grpM = get_int_mag(self.absrmag, self.g3grpid)
         catalog = np.array([self.g3grpid, grpra, grpdec, grpz, grpn, grpM]).T
@@ -610,3 +619,107 @@ class pg3groupfinder:
             return catalog[uniqind]
         else:
             raise ValueError(f"Parameter `by` must be 'galaxy' or 'group', not '{by}'.")
+
+    def summary_page(self, volume, pdfpath):
+        """
+        Make a summary PDF containing relevant statistics and figures.
+        
+        Parameters
+        ----------------
+        volume : float
+            Volume of sample in Mpc3 consistent with PG3 object H0
+        pdfpath : str
+            Location to save pdf.
+        """
+        PDF = PdfPages(pdfpath)
+        grpid = self.g3grpid
+        radeg = self.radeg
+        dedeg = self.dedeg
+        zz = self.z
+        zzerr = self.zerr
+        absrmag = self.absrmag
+        dwarfgiantdivide = self.dwarfgiantdivide
+        H0 = self.cosmo.H0.value
+
+        # text
+        firstpage = plt.figure(figsize=(11.69,8.27))
+        firstpage.clf()
+        lines = [
+            f'Date generated: {datetime.now()}',
+            f'{len(grpid)} Galaxies in Sample '+r'($M_r$ Floor'+f'={np.max(absrmag):0.2f})',
+            f'Redshift range: {np.min(zz):0.5f} to {np.max(zz):0.5f}',
+            f'Comoving Volume = {volume:0.4E} '+r'Mpc$^3$ (assumes $H_0$='+f'{H0:0.1f} km/s/Mpc)',
+            f'{len(np.unique(grpid))} Unique Groups'+r' (including $N_{\rm galaxies}=1$ Groups)',
+        ]
+        text='\n'.join(lines)
+        firstpage.text(0.1,0.5,text,transform=firstpage.transFigure, size=14, ha='left')
+        plt.close()
+
+        # mult func
+        fig1 = plt.figure()
+        grpn = np.unique(grpid,return_counts=True)[1]
+        hbins = np.arange(0.5,40.5,1)
+        plt.hist(grpn, bins=hbins, weights=1/volume+np.zeros_like(grpn))
+        nn = np.linspace(0,45,50)
+        plt.plot(nn, (10**(3.9*np.exp(-0.13*nn)))/(191958.08 / (H0/100.)**3), color='k',label=r'ECO (H23), $z=0$, $M_r \leq -17.33$')
+        plt.xlim(0.5,40.5)
+        plt.yscale('log')
+        plt.xlabel(r'Group $N_{\rm galaxies}$')
+        plt.ylabel(r'Comoving Number Density of Groups [Mpc$^{-3}$]')
+        n_high_N = len(grpn[grpn>np.max(hbins)])
+        if n_high_N>0:
+            plt.annotate(xy=(0.5,0.6), xycoords='axes fraction', text=f'+{n_high_N} N>{np.max(hbins)+0.5} Groups')
+        plt.legend(loc='best')
+        plt.tight_layout()
+        plt.close()
+
+        # ra/dec
+        fig2,axs = plt.subplots(ncols=2,figsize=(11,5))
+        axs[0].scatter(radeg, dedeg, color='k', s=2, alpha=0.2)
+        axs[0].set_xlabel('RA [deg]')
+        axs[0].set_ylabel('DEC [deg]')
+        axs[1].hist(zz, bins='fd')
+        axs[1].set_yscale('log')
+        axs[1].set_xlabel('$z$')
+        axs[1].set_ylabel('Number of Galaxies')
+        plt.tight_layout()
+        plt.close()
+
+        # lum func
+        fig3=plt.figure()
+        eco_lf=(np.float32([0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+           0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+           8.93424203e-06, 7.14739417e-06, 5.36054358e-06, 1.78684804e-05,
+           4.46712438e-05, 7.50476102e-05, 1.50095453e-04, 1.94767577e-04,
+           2.93044839e-04, 4.10977518e-04, 5.16402186e-04, 6.43242267e-04,
+           7.57578760e-04, 8.62996560e-04, 9.95215494e-04, 1.07561890e-03,
+           1.16495602e-03, 1.22229708e-03, 1.28857698e-03, 1.36542693e-03,
+           1.40295830e-03, 1.55487098e-03, 1.68348849e-03, 1.76841393e-03,
+           2.06136331e-03, 2.06850842e-03, 1.23431720e-03]), np.float32([-26.,
+           -25.75, -25.5 , -25.25, -25.  , -24.75, -24.5 , -24.25,
+           -24.  , -23.75, -23.5 , -23.25, -23.  , -22.75, -22.5 , -22.25,
+           -22.  , -21.75, -21.5 , -21.25, -21.  , -20.75, -20.5 , -20.25,
+           -20.  , -19.75, -19.5 , -19.25, -19.  , -18.75, -18.5 , -18.25,
+           -18.  , -17.75, -17.5 , -17.25]))
+        eco_lf = (0.5*(eco_lf[1][:-1]+eco_lf[1][1:]), eco_lf[0])
+        lmax = int(np.max(absrmag))
+        bv = np.arange(-26, lmax, 0.25)
+        hist=plt.hist(absrmag, bins=bv, weights=1/volume+np.zeros_like(absrmag))
+        plt.plot(eco_lf[0], eco_lf[1], color='k', marker='D', label='ECO (z=0)')
+        plt.xlabel(r'$M_r$')
+        plt.ylabel(r'Comoving Number Density [Mpc$^{-3}$]')
+        plt.yscale('log')
+        plt.xlim(-26,lmax)
+        plt.legend(loc='best')
+        plt.gca().invert_xaxis()
+        plt.tight_layout()
+        plt.close()
+        fig4 = self.plotGiantGroupBoundaries(show=False)
+        if (self.absrmag > self.dwarfgiantdivide).any():
+            fig5 = self.plotDwarfBoundaries(show=False, vproj_ylim=(0,3000))
+            to_save = [firstpage, fig1, fig2, fig3, fig4, fig5]
+        else:
+            to_save = [firstpage, fig1, fig2, fig3, fig4]
+        for fig in to_save:
+            PDF.savefig(fig)
+        PDF.close()

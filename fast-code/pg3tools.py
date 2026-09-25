@@ -22,6 +22,9 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
        groupra : RA in decimal degrees of galaxy i's group center.
        groupdec : Declination in decimal degrees of galaxy i's group center.
        groupz : Redshift of galaxy i's group center.
+       z16 : 16th percentile of galaxy i's group's redshift distribution
+       z50 : 50th percentile of galaxy i's group's redshift distribution
+       z84 : 84th percentile of galaxy i's group's redshift distribution
     """
     galaxyra = np.asarray(galaxyra)
     galaxydec = np.asarray(galaxydec)
@@ -32,6 +35,9 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     uniqgrpid, firstidx, galaxyidx, grpn = np.unique(galaxygrpid, return_index=True, return_inverse=True, return_counts=True)
     Ngrps = len(uniqgrpid)
     z_grp = galaxyz[firstidx]
+    z16 = np.zeros(len(galaxyz[firstidx]))
+    z50 = galaxyz[firstidx]
+    z84 = np.zeros_like(z16)
     zmin = np.zeros(Ngrps,dtype=np.float64)+99.
     zmax = np.zeros(Ngrps,dtype=np.float64)-99.
     zerrmin = np.zeros(Ngrps,dtype=np.float64)+99.
@@ -41,8 +47,12 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     np.minimum.at(zerrmin, galaxyidx, galaxyzerr)
     np.maximum.at(zerrmax, galaxyidx, galaxyzerr)
     dz = zerrmin / n_pts_per_sigma
-    groupz = get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, zmax, zerrmin, zerrmax, dz, z_grp)
+    groupz, z16, z50, z84 = get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, zmax, zerrmin, zerrmax, 
+        dz, z_grp, z16, z50, z84)
     groupz = groupz[galaxyidx]
+    z16 = z16[galaxyidx]
+    z50 = z50[galaxyidx]
+    z84 = z84[galaxyidx]
 
     nmembers = np.bincount(galaxyidx, minlength=Ngrps)
     galaxyX, galaxyY, galaxyZ = cartesian_from_spherical_z(galaxyra, galaxydec, groupz)
@@ -54,10 +64,10 @@ def prob_group_skycoords(galaxyra, galaxydec, galaxyz, galaxyzerr, galaxygrpid, 
     deccen = np.degrees(np.arcsin(Zcen / zcen))
     groupra = racen[galaxyidx]
     groupdec = deccen[galaxyidx]
-    return groupra, groupdec, groupz
+    return groupra, groupdec, groupz, z16, z50, z84
 
 @njit(parallel=True)
-def get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, zmax, zerrmin, zerrmax, dz, z_grp):
+def get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, zmax, zerrmin, zerrmax, dz, z_grp, z16, z50, z84):
     """
     Compiled helper function for `prob_group_skycoords`.
     See that function for details.
@@ -77,8 +87,14 @@ def get_group_redshift(galaxyz, galaxyzerr, galaxygrpid, uniqgrpid, grpn, zmin, 
             deltaz2 = deltaz * deltaz
             for j,k in enumerate(grpsel[0]):
                 pz += (norm[k] * np.exp(inv_den2[k] * deltaz2[j]))
+            cdf = np.cumsum(pz)
+            cdf /= cdf[-1]
+            p16, p50, p84 = np.interp([0.16,0.5,0.84], cdf, zgrid)
             z_grp[i] = np.average(zgrid, weights=pz)
-    return z_grp
+            z16[i] = p16
+            z50[i] = p50
+            z84[i] = p84
+    return z_grp, z16, z50, z84
 
 def cartesian_from_spherical_z(ra, dec, redshift):
     """
@@ -425,6 +441,31 @@ def get_int_mag(galmag, grpid):
     sum_terms = np.bincount(galaxyidx, weights=Mi_terms, minlength=Ngroups)
     Mint_grp = -2.5 * np.log10(sum_terms)
     return Mint_grp[galaxyidx]
+
+def get_int_mass(galmass, grpid):
+    """
+    Given a list of galaxy masses and group ID numbers,
+    compute group-integrated masses.
+
+    Parameters
+    ------------
+    galmass : iterable
+       List of log mass for each galaxy
+    grpid : iterable
+       List of group ID numbers for every galaxy.
+
+    Returns
+    ------------
+    mass_grp : np array
+       Array containing log group-integrated mass for each galaxy. Length matches `galmass`.
+    """
+    galmass=np.asarray(galmass)
+    grpid=np.asarray(grpid)
+    grpmass = np.zeros(len(galmass))
+    uniqgrpid, galaxyidx = np.unique(grpid, return_inverse=True)
+    Ngroups = len(uniqgrpid)
+    mass_grp = np.log10(np.bincount(galaxyidx, weights=10**galmass, minlength=Ngroups))
+    return mass_grp[galaxyidx]
 
 def central_flag(grpid, galproperty):
     """
